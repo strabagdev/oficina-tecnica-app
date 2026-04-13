@@ -1,11 +1,24 @@
 import "server-only";
 
 import { getPrisma } from "@/lib/prisma";
-import { getContractOptions, getRecentClosures } from "@/lib/contracts";
+import {
+  getContractOptions,
+  getRecentClosures,
+  getUserAdminSnapshot,
+} from "@/lib/contracts";
 
 export async function getDashboardSnapshot() {
   const prisma = getPrisma();
-  const [contracts, items, consumptions, pendingChanges, closures, contractOptions, recentClosures] =
+  const [
+    contracts,
+    items,
+    consumptions,
+    pendingChanges,
+    closures,
+    contractOptions,
+    recentClosures,
+    users,
+  ] =
     await Promise.all([
     prisma.contract.count(),
     prisma.contractItem.count(),
@@ -18,6 +31,7 @@ export async function getDashboardSnapshot() {
     prisma.monthlyClosure.count(),
     getContractOptions(),
     getRecentClosures(),
+    getUserAdminSnapshot(),
   ]);
 
   return {
@@ -28,6 +42,7 @@ export async function getDashboardSnapshot() {
     closures,
     contractOptions,
     recentClosures,
+    users,
     sampleContract: {
       code: "CT-2026-001",
       name: "Conservacion Vial Sector Norte",

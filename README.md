@@ -22,16 +22,12 @@ Usa `.env.example` como referencia:
 
 ```bash
 DATABASE_URL="postgresql://..."
+ADMIN_NAME="Administrador"
 ADMIN_EMAIL="admin@empresa.cl"
 ADMIN_PASSWORD="CambiaEstaClave123!"
-VIEWER_EMAIL="viewer@empresa.cl"
-VIEWER_PASSWORD="CambiaEstaClave123!"
 ```
 
-Si corres el proyecto localmente sin definir usuarios y no estas en `production`, se crean credenciales de inicio rapido:
-
-- `admin@oficina.local / Admin1234!`
-- `viewer@oficina.local / Viewer1234!`
+Estas variables ahora se usan solo para crear el primer administrador cuando la base aun no tiene usuarios.
 
 ## Desarrollo local
 
@@ -45,7 +41,7 @@ npm run dev
 
 1. Crea un servicio PostgreSQL en Railway.
 2. Configura `DATABASE_URL` en la app.
-3. Define `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `VIEWER_EMAIL` y `VIEWER_PASSWORD`.
+3. Define `ADMIN_NAME`, `ADMIN_EMAIL` y `ADMIN_PASSWORD` para bootstrap inicial.
 4. Ejecuta migracion o sincronizacion antes del primer uso:
 
 ```bash
@@ -82,8 +78,8 @@ El esquema ya incluye:
 
 ## Siguiente iteracion recomendada
 
-1. CRUD de contratos e importacion de itemizado.
+1. CRUD detallado de contratos e importacion de itemizado.
 2. Pantalla de cierre mensual y estado de pago con snapshot por item.
-3. Registro de descuentos por porcentaje o cantidad segun unidad de medida.
+3. Registro guiado de descuentos por porcentaje o cantidad segun unidad de medida.
 4. Pantalla de NOC con aprobacion y trazabilidad.
 5. Reportes de saldo contractual, consumido y proyectado.

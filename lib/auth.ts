@@ -25,13 +25,11 @@ export type AuthUser = {
 };
 
 function getSeedUsers(): AuthSeedUser[] {
-  const adminEmail = process.env.ADMIN_EMAIL ?? "admin@oficina.local";
-  const adminPassword = process.env.ADMIN_PASSWORD ?? "Admin1234!";
-  const viewerEmail = process.env.VIEWER_EMAIL ?? "viewer@oficina.local";
-  const viewerPassword = process.env.VIEWER_PASSWORD ?? "Viewer1234!";
-  const useFallbacks = !process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD;
+  const adminEmail = process.env.ADMIN_EMAIL?.trim();
+  const adminPassword = process.env.ADMIN_PASSWORD?.trim();
+  const adminName = process.env.ADMIN_NAME?.trim() || "Administrador";
 
-  if (process.env.NODE_ENV === "production" && useFallbacks) {
+  if (!adminEmail || !adminPassword) {
     return [];
   }
 
@@ -39,14 +37,8 @@ function getSeedUsers(): AuthSeedUser[] {
     {
       email: adminEmail,
       password: adminPassword,
-      name: "Administrador",
+      name: adminName,
       role: UserRole.ADMIN,
-    },
-    {
-      email: viewerEmail,
-      password: viewerPassword,
-      name: "Usuario Visualizador",
-      role: UserRole.VIEWER,
     },
   ];
 }
@@ -76,29 +68,16 @@ export async function ensureBaseUsers() {
 }
 
 export async function getLoginSetup() {
-  const hasConfiguredUsers =
-    Boolean(process.env.ADMIN_EMAIL) &&
-    Boolean(process.env.ADMIN_PASSWORD) &&
-    Boolean(process.env.VIEWER_EMAIL) &&
-    Boolean(process.env.VIEWER_PASSWORD);
+  const prisma = getPrisma();
+  const userCount = await prisma.user.count();
+  const hasBootstrapAdmin =
+    Boolean(process.env.ADMIN_EMAIL?.trim()) &&
+    Boolean(process.env.ADMIN_PASSWORD?.trim());
 
   return {
-    hasConfiguredUsers,
-    demoUsers:
-      process.env.NODE_ENV === "production"
-        ? []
-        : [
-            {
-              role: "Administrador",
-              email: process.env.ADMIN_EMAIL ?? "admin@oficina.local",
-              password: process.env.ADMIN_PASSWORD ?? "Admin1234!",
-            },
-            {
-              role: "Visualizador",
-              email: process.env.VIEWER_EMAIL ?? "viewer@oficina.local",
-              password: process.env.VIEWER_PASSWORD ?? "Viewer1234!",
-            },
-          ],
+    userCount,
+    hasBootstrapAdmin,
+    bootstrapPending: userCount === 0,
   };
 }
 
@@ -155,6 +134,10 @@ export async function loginWithPassword(email: string, password: string) {
     return null;
   }
 
+  if (!user.active) {
+    return null;
+  }
+
   await createSession(user.id);
 
   return {
@@ -190,6 +173,16 @@ export async function getCurrentUser() {
   }
 
   if (session.expiresAt < new Date()) {
+    await prisma.session.delete({
+      where: {
+        id: session.id,
+      },
+    });
+    cookieStore.delete(SESSION_COOKIE);
+    return null;
+  }
+
+  if (!session.user.active) {
     await prisma.session.delete({
       where: {
         id: session.id,

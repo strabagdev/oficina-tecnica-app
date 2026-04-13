@@ -66,8 +66,8 @@ export default async function LoginPage() {
             <div className="mb-8 space-y-2">
               <h2 className="text-2xl font-semibold text-slate-950">Ingresar</h2>
               <p className="text-sm leading-6 text-slate-600">
-                Acceso simple con dos perfiles iniciales: administrador y
-                visualizador.
+                Acceso por usuarios creados en la base de datos con perfiles de
+                administrador y visualizador.
               </p>
             </div>
 
@@ -75,23 +75,19 @@ export default async function LoginPage() {
 
             <div className="mt-8 space-y-4 rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-600">
               <p className="font-medium text-slate-800">
-                {setup.hasConfiguredUsers
-                  ? "Usuarios definidos por variables de entorno."
-                  : "Modo de inicio rapido local."}
+                {setup.bootstrapPending
+                  ? "Bootstrap inicial pendiente."
+                  : `Usuarios disponibles en el sistema: ${setup.userCount}.`}
               </p>
-              {setup.demoUsers.length > 0 ? (
-                <ul className="space-y-2">
-                  {setup.demoUsers.map((account) => (
-                    <li key={account.email}>
-                      {account.role}: <strong>{account.email}</strong> /{" "}
-                      <strong>{account.password}</strong>
-                    </li>
-                  ))}
-                </ul>
+              {setup.bootstrapPending ? (
+                <p>
+                  Define `ADMIN_EMAIL` y `ADMIN_PASSWORD` para que el sistema cree
+                  automaticamente el primer administrador al iniciar.
+                </p>
               ) : (
                 <p>
-                  En produccion define `ADMIN_EMAIL`, `ADMIN_PASSWORD`,
-                  `VIEWER_EMAIL` y `VIEWER_PASSWORD` antes del primer ingreso.
+                  Las nuevas cuentas y cambios de acceso deben administrarse desde
+                  el panel interno.
                 </p>
               )}
             </div>

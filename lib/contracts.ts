@@ -93,6 +93,37 @@ export async function getContractOptions() {
   }));
 }
 
+export async function getUserAdminSnapshot() {
+  const prisma = getPrisma();
+
+  const users = await prisma.user.findMany({
+    orderBy: [
+      {
+        role: "asc",
+      },
+      {
+        name: "asc",
+      },
+    ],
+    include: {
+      _count: {
+        select: {
+          sessions: true,
+        },
+      },
+    },
+  });
+
+  return users.map((user) => ({
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    active: user.active,
+    sessionCount: user._count.sessions,
+  }));
+}
+
 export async function getRecentClosures() {
   const prisma = getPrisma();
 

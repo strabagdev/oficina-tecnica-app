@@ -1,36 +1,89 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Oficina Tecnica Contractual
 
-## Getting Started
+Base inicial para controlar:
 
-First, run the development server:
+- itemizado de contrato
+- consumo mensual por item
+- cierres mensuales o estados de pago con snapshot del itemizado
+- descuentos mensuales por porcentaje o por cantidad
+- cambios contractuales tipo NOC en cantidades o montos
+- acceso simple con perfiles `ADMIN` y `VIEWER`
+
+## Stack inicial
+
+- Next.js 16 App Router
+- Prisma
+- PostgreSQL pensado para Railway
+- autenticacion simple con cookie segura y sesiones en base de datos
+
+## Variables de entorno
+
+Usa `.env.example` como referencia:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+DATABASE_URL="postgresql://..."
+ADMIN_EMAIL="admin@empresa.cl"
+ADMIN_PASSWORD="CambiaEstaClave123!"
+VIEWER_EMAIL="viewer@empresa.cl"
+VIEWER_PASSWORD="CambiaEstaClave123!"
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Si corres el proyecto localmente sin definir usuarios y no estas en `production`, se crean credenciales de inicio rapido:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- `admin@oficina.local / Admin1234!`
+- `viewer@oficina.local / Viewer1234!`
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Desarrollo local
 
-## Learn More
+```bash
+npm install
+npm run db:push
+npm run dev
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Railway
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+1. Crea un servicio PostgreSQL en Railway.
+2. Configura `DATABASE_URL` en la app.
+3. Define `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `VIEWER_EMAIL` y `VIEWER_PASSWORD`.
+4. Ejecuta migracion o sincronizacion antes del primer uso:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+npm run db:deploy
+```
 
-## Deploy on Vercel
+Si aun no tienes migraciones versionadas, puedes partir con:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+npm run db:push
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Base de datos inicial
+
+El esquema ya incluye:
+
+- `User`
+- `Session`
+- `Contract`
+- `ContractItem`
+- `MonthlyConsumption`
+- `MonthlyClosure`
+- `MonthlyClosureItemSnapshot`
+- `ContractChange`
+
+## Reglas del negocio consideradas
+
+- Cada cierre mensual representa una imagen del itemizado al cierre de ese mes.
+- El cierre guarda snapshot por item para no recalcular historicos cuando el contrato cambie despues.
+- Los descuentos mensuales pueden expresarse de dos formas:
+- `PERCENTAGE`: descuento sobre el 100% o sobre el avance del item.
+- `QUANTITY`: descuento en unidades del item, por ejemplo `m3`, `m2`, `gl`, etc.
+- El consumo mensual puede guardar tanto el bruto del mes como el neto pagable luego del descuento.
+
+## Siguiente iteracion recomendada
+
+1. CRUD de contratos e importacion de itemizado.
+2. Pantalla de cierre mensual y estado de pago con snapshot por item.
+3. Registro de descuentos por porcentaje o cantidad segun unidad de medida.
+4. Pantalla de NOC con aprobacion y trazabilidad.
+5. Reportes de saldo contractual, consumido y proyectado.

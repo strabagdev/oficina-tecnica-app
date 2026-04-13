@@ -1,0 +1,190 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  ADMIN
+  VIEWER
+}
+
+enum ContractStatus {
+  DRAFT
+  ACTIVE
+  ON_HOLD
+  CLOSED
+}
+
+enum ChangeType {
+  QUANTITY
+  AMOUNT
+  MIXED
+}
+
+enum ChangeStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum DiscountMode {
+  NONE
+  PERCENTAGE
+  QUANTITY
+}
+
+model User {
+  id           String    @id @default(cuid())
+  name         String
+  email        String    @unique
+  passwordHash String
+  role         UserRole
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  sessions     Session[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Contract {
+  id             String               @id @default(cuid())
+  code           String               @unique
+  name           String
+  clientName     String
+  description    String?
+  startDate      DateTime?
+  endDate        DateTime?
+  currency       String               @default("CLP")
+  originalAmount Decimal              @db.Decimal(18, 2)
+  status         ContractStatus       @default(DRAFT)
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  items          ContractItem[]
+  changes        ContractChange[]
+  monthlyClosures MonthlyClosure[]
+}
+
+model ContractItem {
+  id                String               @id @default(cuid())
+  contractId        String
+  itemCode          String
+  description       String
+  unit              String?
+  originalQuantity  Decimal              @db.Decimal(18, 3)
+  unitPrice         Decimal              @db.Decimal(18, 2)
+  originalAmount    Decimal              @db.Decimal(18, 2)
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  contract          Contract             @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  consumptions      MonthlyConsumption[]
+  changes           ContractChange[]
+  closureSnapshots  MonthlyClosureItemSnapshot[]
+
+  @@unique([contractId, itemCode])
+  @@index([contractId])
+}
+
+model MonthlyConsumption {
+  id                    String         @id @default(cuid())
+  contractItemId        String
+  year                  Int
+  month                 Int
+  quantityConsumed      Decimal        @db.Decimal(18, 3)
+  amountConsumed        Decimal        @db.Decimal(18, 2)
+  discountMode          DiscountMode   @default(NONE)
+  discountPercent       Decimal?       @db.Decimal(7, 4)
+  discountQuantity      Decimal?       @db.Decimal(18, 3)
+  discountAmount        Decimal?       @db.Decimal(18, 2)
+  payableQuantity       Decimal?       @db.Decimal(18, 3)
+  payableAmount         Decimal?       @db.Decimal(18, 2)
+  note                  String?
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+  contractItem          ContractItem   @relation(fields: [contractItemId], references: [id], onDelete: Cascade)
+
+  @@unique([contractItemId, year, month])
+  @@index([year, month])
+}
+
+model MonthlyClosure {
+  id                String                     @id @default(cuid())
+  contractId        String
+  year              Int
+  month             Int
+  statementNumber   String?
+  closedAt          DateTime                   @default(now())
+  summaryNote       String?
+  grossAmount       Decimal?                   @db.Decimal(18, 2)
+  totalDiscounts    Decimal?                   @db.Decimal(18, 2)
+  netAmount         Decimal?                   @db.Decimal(18, 2)
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
+  contract          Contract                   @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  itemSnapshots     MonthlyClosureItemSnapshot[]
+
+  @@unique([contractId, year, month])
+  @@index([year, month])
+}
+
+model MonthlyClosureItemSnapshot {
+  id                      String          @id @default(cuid())
+  monthlyClosureId        String
+  contractItemId          String
+  itemCode                String
+  description             String
+  unit                    String?
+  contractQuantity        Decimal         @db.Decimal(18, 3)
+  contractAmount          Decimal         @db.Decimal(18, 2)
+  consumedToDateQuantity  Decimal         @db.Decimal(18, 3)
+  consumedToDateAmount    Decimal         @db.Decimal(18, 2)
+  monthQuantity           Decimal         @db.Decimal(18, 3)
+  monthGrossAmount        Decimal         @db.Decimal(18, 2)
+  discountMode            DiscountMode    @default(NONE)
+  discountPercent         Decimal?        @db.Decimal(7, 4)
+  discountQuantity        Decimal?        @db.Decimal(18, 3)
+  discountAmount          Decimal?        @db.Decimal(18, 2)
+  netPayableQuantity      Decimal?        @db.Decimal(18, 3)
+  netPayableAmount        Decimal?        @db.Decimal(18, 2)
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
+  monthlyClosure          MonthlyClosure  @relation(fields: [monthlyClosureId], references: [id], onDelete: Cascade)
+  contractItem            ContractItem    @relation(fields: [contractItemId], references: [id], onDelete: Restrict)
+
+  @@unique([monthlyClosureId, contractItemId])
+  @@index([contractItemId])
+}
+
+model ContractChange {
+  id            String        @id @default(cuid())
+  contractId    String
+  contractItemId String?
+  title         String
+  description   String?
+  type          ChangeType
+  status        ChangeStatus  @default(PENDING)
+  quantityDelta Decimal?      @db.Decimal(18, 3)
+  amountDelta   Decimal?      @db.Decimal(18, 2)
+  effectiveDate DateTime
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  contract      Contract      @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  contractItem   ContractItem? @relation(fields: [contractItemId], references: [id], onDelete: SetNull)
+
+  @@index([contractId])
+  @@index([contractItemId])
+  @@index([status])
+}

@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { UserRole } from "@prisma/client";
 import { notFound } from "next/navigation";
-import type { ReactNode } from "react";
 import { AppShell } from "@/components/app-shell";
 import { ContractItemsAdminClient } from "@/components/contract-items-admin-client";
+import { ContractItemsTree } from "@/components/contract-items-tree";
 import { ContractNav } from "@/components/contract-nav";
 import { FlashBanner } from "@/components/flash-banner";
 import { requireUser } from "@/lib/auth";
@@ -53,34 +53,132 @@ function resolveItemHierarchy(
   };
 }
 
-function HierarchyRow({
-  level,
-  wbs,
-  name,
-}: {
-  level: "family" | "subfamily" | "group";
+type TreeGroup = {
+  key: string;
   wbs: string | null;
   name: string | null;
-}) {
-  const styles = {
-    family: "bg-slate-100 text-slate-950",
-    subfamily: "bg-slate-50 text-slate-900",
-    group: "bg-white text-slate-800",
-  } as const;
+  items: {
+    id: string;
+    itemNumber: string;
+    description: string;
+    unit: string | null;
+    originalQuantity: string;
+    unitPrice: string;
+    originalAmount: string;
+    consumedQuantity: string;
+    consumedAmount: string;
+  }[];
+};
 
-  const indent = {
-    family: "",
-    subfamily: "pl-6",
-    group: "pl-10",
-  } as const;
+type TreeSubfamily = {
+  key: string;
+  wbs: string | null;
+  name: string | null;
+  items: TreeGroup["items"];
+  groups: TreeGroup[];
+};
 
-  return (
-    <tr className={styles[level]}>
-      <td colSpan={7} className={`px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] ${indent[level]}`}>
-        {wbs || "Sin WBS"} · {name}
-      </td>
-    </tr>
-  );
+type TreeFamily = {
+  key: string;
+  wbs: string | null;
+  name: string | null;
+  items: TreeGroup["items"];
+  groups: TreeGroup[];
+  subfamilies: TreeSubfamily[];
+};
+
+type ContractSnapshot = NonNullable<Awaited<ReturnType<typeof getContractDetailSnapshot>>>;
+
+function buildItemTree(
+  items: ContractSnapshot["items"],
+  taxonomy: ItemTaxonomyData,
+) {
+  const familyMap = new Map<string, TreeFamily>();
+
+  for (const item of items) {
+    const hierarchy = resolveItemHierarchy(item, taxonomy);
+    const familyKey = hierarchy.familyKey ?? "__sin-familia";
+    let family = familyMap.get(familyKey);
+
+    if (!family) {
+      family = {
+        key: familyKey,
+        wbs: hierarchy.familyWbs,
+        name: hierarchy.familyName,
+        items: [],
+        groups: [],
+        subfamilies: [],
+      };
+      familyMap.set(familyKey, family);
+    }
+
+    const itemRow = {
+      id: item.id,
+      itemNumber: item.itemNumber,
+      description: item.description,
+      unit: item.unit,
+      originalQuantity: item.originalQuantity,
+      unitPrice: item.unitPrice,
+      originalAmount: item.originalAmount,
+      consumedQuantity: item.consumedQuantity,
+      consumedAmount: item.consumedAmount,
+    };
+
+    if (!hierarchy.subfamilyKey) {
+      if (hierarchy.groupKey) {
+        let group = family.groups.find((entry) => entry.key === hierarchy.groupKey);
+
+        if (!group) {
+          group = {
+            key: hierarchy.groupKey,
+            wbs: hierarchy.groupWbs,
+            name: hierarchy.groupName,
+            items: [],
+          };
+          family.groups.push(group);
+        }
+
+        group.items.push(itemRow);
+      } else {
+        family.items.push(itemRow);
+      }
+
+      continue;
+    }
+
+    let subfamily = family.subfamilies.find((entry) => entry.key === hierarchy.subfamilyKey);
+
+    if (!subfamily) {
+      subfamily = {
+        key: hierarchy.subfamilyKey,
+        wbs: hierarchy.subfamilyWbs,
+        name: hierarchy.subfamilyName,
+        items: [],
+        groups: [],
+      };
+      family.subfamilies.push(subfamily);
+    }
+
+    if (hierarchy.groupKey) {
+      let group = subfamily.groups.find((entry) => entry.key === hierarchy.groupKey);
+
+      if (!group) {
+        group = {
+          key: hierarchy.groupKey,
+          wbs: hierarchy.groupWbs,
+          name: hierarchy.groupName,
+          items: [],
+        };
+        subfamily.groups.push(group);
+      }
+
+      group.items.push(itemRow);
+    } else {
+      subfamily.items.push(itemRow);
+    }
+  }
+
+  return Array.from(familyMap.values());
 }
 
 export default async function ContractItemsPage({
@@ -184,71 +282,7 @@ export default async function ContractItemsPage({
     notFound();
   }
 
-  const itemRows = (() => {
-    let previousFamilyKey: string | null = null;
-    let previousSubfamilyKey: string | null = null;
-    let previousGroupKey: string | null = null;
-
-    return contract.items.flatMap((item: typeof contract.items[number]) => {
-      const hierarchy = resolveItemHierarchy(item, itemTaxonomy);
-      const rows: ReactNode[] = [];
-
-      if (hierarchy.familyKey && hierarchy.familyKey !== previousFamilyKey) {
-        rows.push(
-          <HierarchyRow
-            key={`${item.id}-family`}
-            level="family"
-            wbs={hierarchy.familyWbs}
-            name={hierarchy.familyName}
-          />,
-        );
-        previousFamilyKey = hierarchy.familyKey;
-        previousSubfamilyKey = null;
-        previousGroupKey = null;
-      }
-
-      if (hierarchy.subfamilyKey && hierarchy.subfamilyKey !== previousSubfamilyKey) {
-        rows.push(
-          <HierarchyRow
-            key={`${item.id}-subfamily`}
-            level="subfamily"
-            wbs={hierarchy.subfamilyWbs}
-            name={hierarchy.subfamilyName}
-          />,
-        );
-        previousSubfamilyKey = hierarchy.subfamilyKey;
-        previousGroupKey = null;
-      }
-
-      if (hierarchy.groupKey && hierarchy.groupKey !== previousGroupKey) {
-        rows.push(
-          <HierarchyRow
-            key={`${item.id}-group`}
-            level="group"
-            wbs={hierarchy.groupWbs}
-            name={hierarchy.groupName}
-          />,
-        );
-        previousGroupKey = hierarchy.groupKey;
-      }
-
-      rows.push(
-        <tr key={item.id}>
-          <td className="px-4 py-4 font-medium text-slate-900">{item.itemNumber}</td>
-          <td className="px-4 py-4 text-slate-600">{item.description}</td>
-          <td className="px-4 py-4 text-slate-600">{item.unit}</td>
-          <td className="px-4 py-4 text-slate-600">{item.originalQuantity}</td>
-          <td className="px-4 py-4 text-slate-600">{item.unitPrice}</td>
-          <td className="px-4 py-4 text-slate-600">{item.originalAmount}</td>
-          <td className="px-4 py-4 text-slate-600">
-            {item.consumedQuantity} / {item.consumedAmount}
-          </td>
-        </tr>,
-      );
-
-      return rows;
-    });
-  })();
+  const itemTree = buildItemTree(contract.items, itemTaxonomy);
 
   return (
     <AppShell
@@ -278,87 +312,69 @@ export default async function ContractItemsPage({
 
       <section>
         <article className="rounded-[2rem] border border-slate-200 bg-white p-7 shadow-[0_20px_50px_rgba(15,23,42,0.06)]">
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div>
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
               <h2 className="text-2xl font-semibold text-slate-950">
                 Itemizado del contrato
               </h2>
-              <p className="mt-2 text-sm leading-7 text-slate-600">
+              {user.role === UserRole.ADMIN ? (
+                <ContractItemsAdminClient
+                  contractId={contract.id}
+                  contractCode={contract.code}
+                  items={contract.items}
+                  measurementUnits={measurementUnits}
+                  itemTaxonomy={itemTaxonomy}
+                  redirectTo={`/contracts/${id}/items`}
+                  initialModal={modal}
+                  createDraft={{
+                    familyId: draftFamilyId,
+                    subfamilyId: draftSubfamilyId,
+                    groupId: draftGroupId,
+                    itemNumber: draftItemNumber,
+                    description: draftDescription,
+                    unit: draftUnit,
+                    quantity: draftQuantity,
+                    unitPrice: draftUnitPrice,
+                  }}
+                  editDraft={{
+                    familyId: editFamilyId,
+                    subfamilyId: editSubfamilyId,
+                    groupId: editGroupId,
+                    itemNumber: editItemNumber,
+                    description: editDescription,
+                    unit: editUnit,
+                    quantity: editQuantity,
+                    unitPrice: editUnitPrice,
+                  }}
+                  editItemId={editItemId}
+                  unitDraft={{
+                    code: draftUnitCode,
+                    name: draftUnitName,
+                    sortOrder: draftUnitSortOrder,
+                  }}
+                  unitEditDraft={{
+                    unitId: editUnitId,
+                    code: editUnitCode,
+                    name: editUnitName,
+                    sortOrder: editUnitSortOrder,
+                  }}
+                  showTable={false}
+                />
+              ) : null}
+            </div>
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <p className="text-sm leading-7 text-slate-600">
                 Este modulo te muestra las partidas base y cuanto se ha consumido a la fecha.
               </p>
-            </div>
-            <div className="flex flex-wrap gap-2 text-xs">
-              <Pill label={`${contract.itemCount} partidas`} />
-              <Pill label={`${contract.closureCount} cierres`} />
+              <div className="flex flex-wrap gap-2 text-xs">
+                <Pill label={`${contract.itemCount} partidas`} />
+                <Pill label={`${contract.closureCount} cierres`} />
+              </div>
             </div>
           </div>
 
-          {user.role === UserRole.ADMIN ? (
-            <div className="mt-6">
-              <ContractItemsAdminClient
-                contractId={contract.id}
-                contractCode={contract.code}
-                items={contract.items}
-                measurementUnits={measurementUnits}
-                itemTaxonomy={itemTaxonomy}
-                redirectTo={`/contracts/${id}/items`}
-                initialModal={modal}
-                createDraft={{
-                  familyId: draftFamilyId,
-                  subfamilyId: draftSubfamilyId,
-                  groupId: draftGroupId,
-                  itemNumber: draftItemNumber,
-                  description: draftDescription,
-                  unit: draftUnit,
-                  quantity: draftQuantity,
-                  unitPrice: draftUnitPrice,
-                }}
-                editDraft={{
-                  familyId: editFamilyId,
-                  subfamilyId: editSubfamilyId,
-                  groupId: editGroupId,
-                  itemNumber: editItemNumber,
-                  description: editDescription,
-                  unit: editUnit,
-                  quantity: editQuantity,
-                  unitPrice: editUnitPrice,
-                }}
-                editItemId={editItemId}
-                unitDraft={{
-                  code: draftUnitCode,
-                  name: draftUnitName,
-                  sortOrder: draftUnitSortOrder,
-                }}
-                unitEditDraft={{
-                  unitId: editUnitId,
-                  code: editUnitCode,
-                  name: editUnitName,
-                  sortOrder: editUnitSortOrder,
-                }}
-                showTable={false}
-              />
-            </div>
-          ) : null}
-
           {contract.items.length > 0 ? (
-            <div className="mt-6 overflow-hidden rounded-3xl border border-slate-200">
-              <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
-                <thead className="bg-slate-50 text-slate-500">
-                  <tr>
-                    <th className="px-4 py-3 font-medium">WBS / Item</th>
-                    <th className="px-4 py-3 font-medium">Descripcion</th>
-                    <th className="px-4 py-3 font-medium">Unidad</th>
-                    <th className="px-4 py-3 font-medium">Cantidad base</th>
-                    <th className="px-4 py-3 font-medium">Precio unitario</th>
-                    <th className="px-4 py-3 font-medium">Monto base</th>
-                    <th className="px-4 py-3 font-medium">Consumido</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 bg-white">
-                  {itemRows}
-                </tbody>
-              </table>
-            </div>
+            <ContractItemsTree contractId={id} families={itemTree} />
           ) : (
             <article className="mt-6 rounded-[1.75rem] border border-dashed border-slate-300 bg-slate-50 p-6">
               <h3 className="text-lg font-semibold text-slate-950">

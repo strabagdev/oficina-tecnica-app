@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { ItemTaxonomyFields } from "@/components/item-taxonomy-fields";
 import { Modal } from "@/components/modal";
@@ -153,28 +154,27 @@ export function ContractItemsAdminClient({
 
   return (
     <>
-      <div className="flex flex-wrap gap-3">
-        <button
-          type="button"
+      <div className="flex flex-wrap gap-2">
+        <IconActionButton
+          label="Nueva partida"
           onClick={() => setActiveModal({ type: "create" })}
-          className="rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+          tone="primary"
         >
-          Nueva partida
-        </button>
-        <button
-          type="button"
+          <PlusIcon />
+        </IconActionButton>
+        <IconActionButton
+          label="Importar XLSX"
           onClick={() => setActiveModal({ type: "import" })}
-          className="rounded-full border border-slate-300 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-900 hover:text-slate-950"
         >
-          Importar XLSX
-        </button>
-        <button
-          type="button"
+          <UploadIcon />
+        </IconActionButton>
+        <IconActionButton
+          label="Editar unidades"
           onClick={() => setActiveModal({ type: "unit" })}
-          className="rounded-full border border-[#0f766e] px-5 py-3 text-sm font-semibold text-[#0f766e] transition hover:bg-[#f0fdfa]"
+          tone="teal"
         >
-          Editar unidades
-        </button>
+          <SlidersIcon />
+        </IconActionButton>
       </div>
 
       {showTable ? (
@@ -815,6 +815,72 @@ function SelectField({
         ))}
       </select>
     </div>
+  );
+}
+
+function IconActionButton({
+  label,
+  onClick,
+  tone = "default",
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  tone?: "default" | "primary" | "teal";
+  children: ReactNode;
+}) {
+  const className =
+    tone === "primary"
+      ? "bg-slate-950 text-white hover:bg-slate-800"
+      : tone === "teal"
+        ? "border border-[#0f766e] bg-white text-[#0f766e] hover:bg-[#f0fdfa]"
+        : "border border-slate-300 bg-white text-slate-700 hover:border-slate-900 hover:text-slate-950";
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className={`inline-flex h-11 w-11 items-center justify-center rounded-full transition ${className}`}
+    >
+      <span aria-hidden="true">{children}</span>
+    </button>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5 fill-none stroke-current stroke-[2]">
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
+    </svg>
+  );
+}
+
+function UploadIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5 fill-none stroke-current stroke-[2]">
+      <path d="M12 16V5" />
+      <path d="M8 9l4-4 4 4" />
+      <path d="M5 19h14" />
+    </svg>
+  );
+}
+
+function SlidersIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5 fill-none stroke-current stroke-[2]">
+      <path d="M4 6h10" />
+      <path d="M18 6h2" />
+      <circle cx="16" cy="6" r="2" />
+      <path d="M4 12h2" />
+      <path d="M10 12h10" />
+      <circle cx="8" cy="12" r="2" />
+      <path d="M4 18h10" />
+      <path d="M18 18h2" />
+      <circle cx="16" cy="18" r="2" />
+    </svg>
   );
 }
 

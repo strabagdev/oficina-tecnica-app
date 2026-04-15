@@ -3,7 +3,6 @@ import Link from "next/link";
 const items = [
   { key: "overview", label: "Resumen" },
   { key: "items", label: "Partidas" },
-  { key: "items-admin", label: "Admin itemizado" },
   { key: "closures", label: "Cierres" },
   { key: "changes", label: "NOC" },
 ] as const;
@@ -11,25 +10,20 @@ const items = [
 export function ContractNav({
   contractId,
   active,
-  showItemAdmin = false,
 }: {
   contractId: string;
   active: (typeof items)[number]["key"];
-  showItemAdmin?: boolean;
 }) {
   const hrefByKey = {
     overview: `/contracts/${contractId}`,
     items: `/contracts/${contractId}/items`,
-    "items-admin": `/contracts/${contractId}/items/admin`,
     closures: `/contracts/${contractId}/closures`,
     changes: `/contracts/${contractId}/changes`,
   } as const;
 
   return (
     <nav className="flex flex-wrap gap-3">
-      {items
-        .filter((item) => (item.key === "items-admin" ? showItemAdmin : true))
-        .map((item) => {
+      {items.map((item) => {
         const isActive = item.key === active;
 
         return (

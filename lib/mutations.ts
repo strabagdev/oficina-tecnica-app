@@ -3,6 +3,7 @@ import "server-only";
 import { ContractStatus, DiscountMode, Prisma } from "@prisma/client";
 import * as XLSX from "xlsx";
 import { getItemTaxonomyOptions } from "@/lib/item-taxonomy";
+import { parseDecimalInput } from "@/lib/numeric";
 import { getPrisma } from "@/lib/prisma";
 import { getMeasurementUnitOptions } from "@/lib/measurement-units";
 
@@ -117,14 +118,7 @@ type ResolvedItemTaxonomy = {
 };
 
 function parseDecimal(value: string) {
-  const normalized = value.replace(/\s/g, "").replace(",", ".");
-  const parsed = Number(normalized);
-
-  if (!Number.isFinite(parsed)) {
-    return null;
-  }
-
-  return new Prisma.Decimal(parsed);
+  return parseDecimalInput(value);
 }
 
 function parseItemLines(source: string): ParsedItemsResult {

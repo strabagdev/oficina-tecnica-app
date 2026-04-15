@@ -43,7 +43,7 @@ export default async function ContractClosuresPage({
       title={`Cierres · ${contract.code}`}
       description="Revision de estados de pago y cierres mensuales del contrato."
     >
-      <ContractNav contractId={id} active="closures" showItemAdmin={user.role === UserRole.ADMIN} />
+      <ContractNav contractId={id} active="closures" />
       <FlashBanner type={flashType} message={flashMessage} />
 
       <section className="grid gap-6 xl:grid-cols-[0.72fr_1.28fr]">

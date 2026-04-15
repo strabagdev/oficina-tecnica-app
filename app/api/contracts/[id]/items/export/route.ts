@@ -2,6 +2,7 @@ import { UserRole } from "@prisma/client";
 import type { Prisma } from "@prisma/client";
 import * as XLSX from "xlsx";
 import { getCurrentUser } from "@/lib/auth";
+import { decimalToFixedString } from "@/lib/numeric";
 import { getPrisma } from "@/lib/prisma";
 
 type ContractExportRecord = Prisma.ContractGetPayload<{
@@ -48,9 +49,9 @@ export async function GET(
     numeroItem: item.itemNumber,
     descripcion: item.description,
     unidad: item.unit ?? "",
-    cantidad: item.originalQuantity.toNumber(),
-    precioUnitario: item.unitPrice.toNumber(),
-    montoBase: item.originalAmount.toNumber(),
+    cantidad: decimalToFixedString(item.originalQuantity, 3),
+    precioUnitario: decimalToFixedString(item.unitPrice, 2),
+    montoBase: decimalToFixedString(item.originalAmount, 2),
   }));
 
   const workbook = XLSX.utils.book_new();

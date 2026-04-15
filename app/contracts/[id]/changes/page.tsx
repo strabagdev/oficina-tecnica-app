@@ -33,7 +33,7 @@ export default async function ContractChangesPage({
       title={`NOC · ${contract.code}`}
       description="Registro de cambios contractuales pendientes, aprobados o rechazados."
     >
-      <ContractNav contractId={id} active="changes" showItemAdmin={user.role === UserRole.ADMIN} />
+      <ContractNav contractId={id} active="changes" />
 
       <section className="grid gap-5">
         {contract.changes.length > 0 ? (

@@ -52,7 +52,7 @@ export default async function ContractDetailPage({
         </div>
       }
     >
-      <ContractNav contractId={id} active="overview" showItemAdmin={user.role === UserRole.ADMIN} />
+      <ContractNav contractId={id} active="overview" />
 
       <section className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
         <article className="rounded-[2rem] border border-slate-200 bg-white p-7 shadow-[0_20px_50px_rgba(15,23,42,0.06)]">

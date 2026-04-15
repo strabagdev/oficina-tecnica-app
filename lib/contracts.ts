@@ -1,6 +1,10 @@
 import "server-only";
 
 import { DiscountMode, Prisma } from "@prisma/client";
+import {
+  formatCurrencyDisplay,
+  formatDecimalDisplay,
+} from "@/lib/numeric";
 import { getPrisma } from "@/lib/prisma";
 
 type ContractDetailRecord = Prisma.ContractGetPayload<{
@@ -24,32 +28,11 @@ type ClosureEntryPreview = {
 };
 
 function formatCurrency(value: Prisma.Decimal | string | number | null | undefined) {
-  if (value === null || value === undefined) {
-    return "$ 0";
-  }
-
-  const numericValue =
-    value instanceof Prisma.Decimal ? value.toNumber() : Number(value);
-
-  return new Intl.NumberFormat("es-CL", {
-    style: "currency",
-    currency: "CLP",
-    maximumFractionDigits: 0,
-  }).format(Number.isFinite(numericValue) ? numericValue : 0);
+  return formatCurrencyDisplay(value);
 }
 
 function formatQuantity(value: Prisma.Decimal | string | number | null | undefined) {
-  if (value === null || value === undefined) {
-    return "0";
-  }
-
-  const numericValue =
-    value instanceof Prisma.Decimal ? value.toNumber() : Number(value);
-
-  return new Intl.NumberFormat("es-CL", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 3,
-  }).format(Number.isFinite(numericValue) ? numericValue : 0);
+  return formatDecimalDisplay(value, { scale: 3, trimTrailingZeros: true });
 }
 
 function formatDateForInput(value: Date | null | undefined) {

@@ -4,11 +4,13 @@ import { UserRole } from "@prisma/client";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { AppShell } from "@/components/app-shell";
+import { ContractItemsAdminClient } from "@/components/contract-items-admin-client";
 import { ContractNav } from "@/components/contract-nav";
 import { FlashBanner } from "@/components/flash-banner";
 import { requireUser } from "@/lib/auth";
 import { getContractDetailSnapshot } from "@/lib/contracts";
 import { getItemTaxonomyOptions } from "@/lib/item-taxonomy";
+import { getMeasurementUnitSnapshot } from "@/lib/measurement-units";
 
 export const metadata: Metadata = {
   title: "Partidas del contrato | Oficina Tecnica",
@@ -48,7 +50,6 @@ function resolveItemHierarchy(
     groupName: item.itemGroup,
     groupWbs: group?.wbs ?? null,
     groupKey: item.itemGroup ? `${group?.wbs ?? "sin-wbs"}::${item.itemGroup}` : null,
-    displayWbs: group?.wbs ?? subfamily?.wbs ?? family?.wbs ?? "-",
   };
 }
 
@@ -75,7 +76,7 @@ function HierarchyRow({
 
   return (
     <tr className={styles[level]}>
-      <td colSpan={8} className={`px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] ${indent[level]}`}>
+      <td colSpan={7} className={`px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] ${indent[level]}`}>
         {wbs || "Sin WBS"} · {name}
       </td>
     </tr>
@@ -91,9 +92,10 @@ export default async function ContractItemsPage({
 }) {
   const user = await requireUser();
   const { id } = await params;
-  const [contract, itemTaxonomy] = await Promise.all([
+  const [contract, itemTaxonomy, measurementUnits] = await Promise.all([
     getContractDetailSnapshot(id),
     getItemTaxonomyOptions(),
+    user.role === UserRole.ADMIN ? getMeasurementUnitSnapshot() : Promise.resolve([]),
   ]);
   const resolvedSearchParams = searchParams ? await searchParams : undefined;
   const flashType = Array.isArray(resolvedSearchParams?.type)
@@ -102,6 +104,81 @@ export default async function ContractItemsPage({
   const flashMessage = Array.isArray(resolvedSearchParams?.message)
     ? resolvedSearchParams?.message[0]
     : resolvedSearchParams?.message;
+  const modal = Array.isArray(resolvedSearchParams?.modal)
+    ? resolvedSearchParams?.modal[0] ?? ""
+    : resolvedSearchParams?.modal ?? "";
+  const draftFamilyId = Array.isArray(resolvedSearchParams?.draftFamilyId)
+    ? resolvedSearchParams?.draftFamilyId[0] ?? ""
+    : resolvedSearchParams?.draftFamilyId ?? "";
+  const draftSubfamilyId = Array.isArray(resolvedSearchParams?.draftSubfamilyId)
+    ? resolvedSearchParams?.draftSubfamilyId[0] ?? ""
+    : resolvedSearchParams?.draftSubfamilyId ?? "";
+  const draftGroupId = Array.isArray(resolvedSearchParams?.draftGroupId)
+    ? resolvedSearchParams?.draftGroupId[0] ?? ""
+    : resolvedSearchParams?.draftGroupId ?? "";
+  const draftItemNumber = Array.isArray(resolvedSearchParams?.draftItemNumber)
+    ? resolvedSearchParams?.draftItemNumber[0] ?? ""
+    : resolvedSearchParams?.draftItemNumber ?? "";
+  const draftDescription = Array.isArray(resolvedSearchParams?.draftDescription)
+    ? resolvedSearchParams?.draftDescription[0] ?? ""
+    : resolvedSearchParams?.draftDescription ?? "";
+  const draftUnit = Array.isArray(resolvedSearchParams?.draftUnit)
+    ? resolvedSearchParams?.draftUnit[0] ?? ""
+    : resolvedSearchParams?.draftUnit ?? "";
+  const draftQuantity = Array.isArray(resolvedSearchParams?.draftQuantity)
+    ? resolvedSearchParams?.draftQuantity[0] ?? ""
+    : resolvedSearchParams?.draftQuantity ?? "";
+  const draftUnitPrice = Array.isArray(resolvedSearchParams?.draftUnitPrice)
+    ? resolvedSearchParams?.draftUnitPrice[0] ?? ""
+    : resolvedSearchParams?.draftUnitPrice ?? "";
+  const editItemId = Array.isArray(resolvedSearchParams?.editItemId)
+    ? resolvedSearchParams?.editItemId[0] ?? ""
+    : resolvedSearchParams?.editItemId ?? "";
+  const editFamilyId = Array.isArray(resolvedSearchParams?.editFamilyId)
+    ? resolvedSearchParams?.editFamilyId[0] ?? ""
+    : resolvedSearchParams?.editFamilyId ?? "";
+  const editSubfamilyId = Array.isArray(resolvedSearchParams?.editSubfamilyId)
+    ? resolvedSearchParams?.editSubfamilyId[0] ?? ""
+    : resolvedSearchParams?.editSubfamilyId ?? "";
+  const editGroupId = Array.isArray(resolvedSearchParams?.editGroupId)
+    ? resolvedSearchParams?.editGroupId[0] ?? ""
+    : resolvedSearchParams?.editGroupId ?? "";
+  const editItemNumber = Array.isArray(resolvedSearchParams?.editItemNumber)
+    ? resolvedSearchParams?.editItemNumber[0] ?? ""
+    : resolvedSearchParams?.editItemNumber ?? "";
+  const editDescription = Array.isArray(resolvedSearchParams?.editDescription)
+    ? resolvedSearchParams?.editDescription[0] ?? ""
+    : resolvedSearchParams?.editDescription ?? "";
+  const editUnit = Array.isArray(resolvedSearchParams?.editUnit)
+    ? resolvedSearchParams?.editUnit[0] ?? ""
+    : resolvedSearchParams?.editUnit ?? "";
+  const editQuantity = Array.isArray(resolvedSearchParams?.editQuantity)
+    ? resolvedSearchParams?.editQuantity[0] ?? ""
+    : resolvedSearchParams?.editQuantity ?? "";
+  const editUnitPrice = Array.isArray(resolvedSearchParams?.editUnitPrice)
+    ? resolvedSearchParams?.editUnitPrice[0] ?? ""
+    : resolvedSearchParams?.editUnitPrice ?? "";
+  const draftUnitCode = Array.isArray(resolvedSearchParams?.draftUnitCode)
+    ? resolvedSearchParams?.draftUnitCode[0] ?? ""
+    : resolvedSearchParams?.draftUnitCode ?? "";
+  const draftUnitName = Array.isArray(resolvedSearchParams?.draftUnitName)
+    ? resolvedSearchParams?.draftUnitName[0] ?? ""
+    : resolvedSearchParams?.draftUnitName ?? "";
+  const draftUnitSortOrder = Array.isArray(resolvedSearchParams?.draftUnitSortOrder)
+    ? resolvedSearchParams?.draftUnitSortOrder[0] ?? ""
+    : resolvedSearchParams?.draftUnitSortOrder ?? "";
+  const editUnitId = Array.isArray(resolvedSearchParams?.editUnitId)
+    ? resolvedSearchParams?.editUnitId[0] ?? ""
+    : resolvedSearchParams?.editUnitId ?? "";
+  const editUnitCode = Array.isArray(resolvedSearchParams?.editUnitCode)
+    ? resolvedSearchParams?.editUnitCode[0] ?? ""
+    : resolvedSearchParams?.editUnitCode ?? "";
+  const editUnitName = Array.isArray(resolvedSearchParams?.editUnitName)
+    ? resolvedSearchParams?.editUnitName[0] ?? ""
+    : resolvedSearchParams?.editUnitName ?? "";
+  const editUnitSortOrder = Array.isArray(resolvedSearchParams?.editUnitSortOrder)
+    ? resolvedSearchParams?.editUnitSortOrder[0] ?? ""
+    : resolvedSearchParams?.editUnitSortOrder ?? "";
 
   if (!contract) {
     notFound();
@@ -158,7 +235,6 @@ export default async function ContractItemsPage({
       rows.push(
         <tr key={item.id}>
           <td className="px-4 py-4 font-medium text-slate-900">{item.itemNumber}</td>
-          <td className="px-4 py-4 text-slate-600">{hierarchy.displayWbs}</td>
           <td className="px-4 py-4 text-slate-600">{item.description}</td>
           <td className="px-4 py-4 text-slate-600">{item.unit}</td>
           <td className="px-4 py-4 text-slate-600">{item.originalQuantity}</td>
@@ -188,14 +264,6 @@ export default async function ContractItemsPage({
           >
             Exportar XLSX
           </a>
-          {user.role === UserRole.ADMIN ? (
-            <Link
-              href={`/contracts/${id}/items/admin`}
-              className="rounded-full bg-white px-5 py-2.5 text-sm font-medium text-slate-950 transition hover:bg-slate-100"
-            >
-              Administrar itemizado
-            </Link>
-          ) : null}
           <Link
             href={`/contracts/${id}/closures`}
             className="rounded-full border border-white/20 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-white/10"
@@ -205,7 +273,7 @@ export default async function ContractItemsPage({
         </div>
       }
     >
-      <ContractNav contractId={id} active="items" showItemAdmin={user.role === UserRole.ADMIN} />
+      <ContractNav contractId={id} active="items" />
       <FlashBanner type={flashType} message={flashMessage} />
 
       <section>
@@ -225,13 +293,59 @@ export default async function ContractItemsPage({
             </div>
           </div>
 
+          {user.role === UserRole.ADMIN ? (
+            <div className="mt-6">
+              <ContractItemsAdminClient
+                contractId={contract.id}
+                contractCode={contract.code}
+                items={contract.items}
+                measurementUnits={measurementUnits}
+                itemTaxonomy={itemTaxonomy}
+                redirectTo={`/contracts/${id}/items`}
+                initialModal={modal}
+                createDraft={{
+                  familyId: draftFamilyId,
+                  subfamilyId: draftSubfamilyId,
+                  groupId: draftGroupId,
+                  itemNumber: draftItemNumber,
+                  description: draftDescription,
+                  unit: draftUnit,
+                  quantity: draftQuantity,
+                  unitPrice: draftUnitPrice,
+                }}
+                editDraft={{
+                  familyId: editFamilyId,
+                  subfamilyId: editSubfamilyId,
+                  groupId: editGroupId,
+                  itemNumber: editItemNumber,
+                  description: editDescription,
+                  unit: editUnit,
+                  quantity: editQuantity,
+                  unitPrice: editUnitPrice,
+                }}
+                editItemId={editItemId}
+                unitDraft={{
+                  code: draftUnitCode,
+                  name: draftUnitName,
+                  sortOrder: draftUnitSortOrder,
+                }}
+                unitEditDraft={{
+                  unitId: editUnitId,
+                  code: editUnitCode,
+                  name: editUnitName,
+                  sortOrder: editUnitSortOrder,
+                }}
+                showTable={false}
+              />
+            </div>
+          ) : null}
+
           {contract.items.length > 0 ? (
             <div className="mt-6 overflow-hidden rounded-3xl border border-slate-200">
               <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
                 <thead className="bg-slate-50 text-slate-500">
                   <tr>
-                    <th className="px-4 py-3 font-medium">N item</th>
-                    <th className="px-4 py-3 font-medium">WBS</th>
+                    <th className="px-4 py-3 font-medium">WBS / Item</th>
                     <th className="px-4 py-3 font-medium">Descripcion</th>
                     <th className="px-4 py-3 font-medium">Unidad</th>
                     <th className="px-4 py-3 font-medium">Cantidad base</th>

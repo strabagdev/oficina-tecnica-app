@@ -34,7 +34,7 @@ export function AppShell({
 }) {
   return (
     <main className="min-h-screen bg-[#f6f8f7] text-slate-900">
-      <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 px-6 py-8">
+      <div className="flex min-h-screen w-full flex-col gap-6 px-4 py-6 md:px-6 xl:px-8 2xl:px-10">
         <header className="rounded-[2rem] bg-slate-950 px-8 py-7 text-white shadow-[0_28px_80px_rgba(15,23,42,0.25)]">
           <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
             <div className="space-y-3">

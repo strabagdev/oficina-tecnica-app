@@ -69,8 +69,8 @@ export function ItemTaxonomyFields({
   }, [availableGroups, groupId]);
 
   return (
-    <div className="grid gap-4 md:grid-cols-3">
-      <div className="space-y-2">
+    <div className="grid gap-3 md:grid-cols-3">
+      <div className="space-y-1.5">
         <label className="block text-sm font-medium text-slate-700" htmlFor={`${idPrefix}-family`}>
           Familia
         </label>
@@ -83,7 +83,7 @@ export function ItemTaxonomyFields({
             setSubfamilyId("");
             setGroupId("");
           }}
-          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#0f766e] focus:ring-4 focus:ring-[#99f6e4]"
+          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-[#0f766e] focus:ring-4 focus:ring-[#99f6e4]"
         >
           <option value="">Selecciona familia</option>
           {families.map((family) => (
@@ -95,7 +95,7 @@ export function ItemTaxonomyFields({
         </select>
       </div>
 
-      <div className="space-y-2">
+      <div className="space-y-1.5">
         <label className="block text-sm font-medium text-slate-700" htmlFor={`${idPrefix}-subfamily`}>
           Subfamilia opcional
         </label>
@@ -108,7 +108,7 @@ export function ItemTaxonomyFields({
             setGroupId("");
           }}
           disabled={!familyId}
-          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition disabled:cursor-not-allowed disabled:bg-slate-50 focus:border-[#0f766e] focus:ring-4 focus:ring-[#99f6e4]"
+          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition disabled:cursor-not-allowed disabled:bg-slate-50 focus:border-[#0f766e] focus:ring-4 focus:ring-[#99f6e4]"
         >
           <option value="">Sin subfamilia</option>
           {availableSubfamilies.map((subfamily) => (
@@ -120,7 +120,7 @@ export function ItemTaxonomyFields({
         </select>
       </div>
 
-      <div className="space-y-2">
+      <div className="space-y-1.5">
         <label className="block text-sm font-medium text-slate-700" htmlFor={`${idPrefix}-group`}>
           Grupo opcional
         </label>
@@ -130,7 +130,7 @@ export function ItemTaxonomyFields({
           value={groupId}
           onChange={(event) => setGroupId(event.target.value)}
           disabled={!subfamilyId}
-          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition disabled:cursor-not-allowed disabled:bg-slate-50 focus:border-[#0f766e] focus:ring-4 focus:ring-[#99f6e4]"
+          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition disabled:cursor-not-allowed disabled:bg-slate-50 focus:border-[#0f766e] focus:ring-4 focus:ring-[#99f6e4]"
         >
           <option value="">Sin grupo</option>
           {availableGroups.map((group) => (

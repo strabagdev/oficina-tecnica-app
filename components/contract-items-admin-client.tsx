@@ -94,6 +94,7 @@ export function ContractItemsAdminClient({
   unitDraft,
   unitEditDraft,
   showTable = true,
+  editMode = false,
 }: {
   contractId: string;
   contractCode: string;
@@ -112,6 +113,7 @@ export function ContractItemsAdminClient({
   unitDraft: UnitDraftState;
   unitEditDraft: UnitEditDraftState;
   showTable?: boolean;
+  editMode?: boolean;
 }) {
   const [activeModal, setActiveModal] = useState<ModalState>(null);
   const [showCreateUnitForm, setShowCreateUnitForm] = useState(false);
@@ -146,6 +148,15 @@ export function ContractItemsAdminClient({
     activeModal?.type === "edit"
       ? items.find((candidate) => candidate.id === activeModal.itemId) ?? null
       : null;
+  const hasEditDraft =
+    Boolean(editDraft.familyId) ||
+    Boolean(editDraft.subfamilyId) ||
+    Boolean(editDraft.groupId) ||
+    Boolean(editDraft.itemNumber) ||
+    Boolean(editDraft.description) ||
+    Boolean(editDraft.unit) ||
+    Boolean(editDraft.quantity) ||
+    Boolean(editDraft.unitPrice);
 
   const activeUnitOptions = useMemo(
     () => measurementUnits.filter((unit) => unit.active),
@@ -163,6 +174,13 @@ export function ContractItemsAdminClient({
           <PlusIcon />
         </IconActionButton>
         <IconActionButton
+          label={editMode ? "Salir de modo edición" : "Entrar en modo edición"}
+          onClick={() => toggleQueryParam("editMode", editMode ? "" : "1")}
+          tone={editMode ? "primary" : "default"}
+        >
+          <PencilIcon />
+        </IconActionButton>
+        <IconActionButton
           label="Importar XLSX"
           onClick={() => setActiveModal({ type: "import" })}
         >
@@ -178,17 +196,17 @@ export function ContractItemsAdminClient({
       </div>
 
       {showTable ? (
-        <section className="mt-6 rounded-[2rem] border border-slate-200 bg-white p-6 shadow-[0_20px_50px_rgba(15,23,42,0.06)]">
+        <section className="mt-5 rounded-[2rem] border border-slate-200 bg-white p-5 shadow-[0_20px_50px_rgba(15,23,42,0.06)]">
           <div>
             <h2 className="text-2xl font-semibold text-slate-950">Administracion de partidas</h2>
-            <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-600">
+            <p className="mt-1.5 max-w-3xl text-sm leading-6 text-slate-600">
               Mantiene el itemizado operativo desde una sola vista: crea, importa y corrige
               partidas sin salir del contexto del contrato.
             </p>
           </div>
 
           {items.length > 0 ? (
-            <div className="mt-6 overflow-x-auto rounded-[1.5rem] border border-slate-200">
+            <div className="mt-5 overflow-x-auto rounded-[1.5rem] border border-slate-200">
               <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
                 <thead className="bg-slate-50 text-slate-600">
                   <tr>
@@ -233,7 +251,7 @@ export function ContractItemsAdminClient({
               </table>
             </div>
           ) : (
-            <div className="mt-6 rounded-[1.5rem] border border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-sm leading-7 text-slate-600">
+            <div className="mt-5 rounded-[1.5rem] border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-sm leading-6 text-slate-600">
               Todavia no hay partidas cargadas en{" "}
               <span className="font-semibold text-slate-900">{contractCode}</span>. Usa Nueva
               partida o Importar XLSX para comenzar.
@@ -273,7 +291,7 @@ export function ContractItemsAdminClient({
           action="/api/contract-items/import"
           method="post"
           encType="multipart/form-data"
-          className="space-y-5"
+          className="space-y-4"
         >
           <input type="hidden" name="contractId" value={contractId} />
           <input type="hidden" name="redirectTo" value={redirectTo} />
@@ -296,7 +314,7 @@ export function ContractItemsAdminClient({
               className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900"
             />
           </div>
-          <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm leading-7 text-slate-600">
+          <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600">
             La familia es obligatoria. Subfamilia y grupo pueden quedar vacios cuando la partida
             dependa directamente de una familia.
           </div>
@@ -316,7 +334,7 @@ export function ContractItemsAdminClient({
         description="Administra el catalogo de unidades y crea una nueva solo cuando realmente haga falta."
         size="xl"
       >
-        <div className="space-y-6">
+        <div className="space-y-5">
           <div className="overflow-x-auto rounded-[1.5rem] border border-slate-200">
             <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
               <thead className="bg-slate-50 text-slate-600">
@@ -458,7 +476,7 @@ export function ContractItemsAdminClient({
             </table>
           </div>
 
-          <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-5">
+          <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h3 className="text-lg font-semibold text-slate-950">Crear nueva unidad</h3>
@@ -479,7 +497,7 @@ export function ContractItemsAdminClient({
               <form
                 action="/api/measurement-units"
                 method="post"
-                className="mt-5 grid gap-4 md:grid-cols-3"
+                className="mt-4 grid gap-3 md:grid-cols-3"
                 onSubmit={(event) => {
                   const formData = new FormData(event.currentTarget);
                   const error = validateUnitFormData(formData);
@@ -557,7 +575,7 @@ export function ContractItemsAdminClient({
             measurementUnits={activeUnitOptions}
             submitLabel="Guardar cambios"
             draft={
-              editItemId === resolvedEditItem.id
+              editItemId === resolvedEditItem.id && hasEditDraft
                 ? editDraft
                 : {
                     familyId:
@@ -659,7 +677,7 @@ function ItemForm({
     <form
       action={action}
       method="post"
-      className="space-y-5"
+      className="space-y-4"
       onSubmit={(event) => {
         const formData = new FormData(event.currentTarget);
         const validationError = validateItemFormData(formData);
@@ -685,7 +703,7 @@ function ItemForm({
         defaultGroupId={draft.groupId}
         idPrefix={`${idPrefix}-taxonomy`}
       />
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-3 xl:grid-cols-4">
         <Field
           label="Numero itemizado"
           name="itemNumber"
@@ -705,16 +723,6 @@ function ItemForm({
           }))}
           required
         />
-      </div>
-      <Field
-        label="Descripcion"
-        name="description"
-        defaultValue={draft.description}
-        placeholder="Descripcion de la partida"
-        inputId={`${idPrefix}-description`}
-        required
-      />
-      <div className="grid gap-4 lg:grid-cols-2">
         <Field
           label="Cantidad"
           name="quantity"
@@ -732,8 +740,16 @@ function ItemForm({
           required
         />
       </div>
+      <Field
+        label="Descripcion"
+        name="description"
+        defaultValue={draft.description}
+        placeholder="Descripcion de la partida"
+        inputId={`${idPrefix}-description`}
+        required
+      />
       {error ? <p className="text-sm font-medium text-rose-600">{error}</p> : null}
-      <div className="flex flex-col gap-3 border-t border-slate-200 pt-5 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-slate-500">
           {amountLabel ?? "El monto base se recalcula automaticamente al guardar."}
         </p>
@@ -764,7 +780,7 @@ function Field({
   required?: boolean;
 }) {
   return (
-    <div className="space-y-2">
+    <div className="space-y-1.5">
       <label className="block text-sm font-medium text-slate-700" htmlFor={inputId}>
         {label}
       </label>
@@ -774,7 +790,7 @@ function Field({
         placeholder={placeholder}
         defaultValue={defaultValue}
         required={required}
-        className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#0f766e] focus:ring-4 focus:ring-[#99f6e4]"
+        className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-[#0f766e] focus:ring-4 focus:ring-[#99f6e4]"
       />
     </div>
   );
@@ -796,7 +812,7 @@ function SelectField({
   required?: boolean;
 }) {
   return (
-    <div className="space-y-2">
+    <div className="space-y-1.5">
       <label className="block text-sm font-medium text-slate-700" htmlFor={inputId}>
         {label}
       </label>
@@ -805,7 +821,7 @@ function SelectField({
         name={name}
         defaultValue={defaultValue ?? ""}
         required={required}
-        className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#0f766e] focus:ring-4 focus:ring-[#99f6e4]"
+        className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-[#0f766e] focus:ring-4 focus:ring-[#99f6e4]"
       >
         <option value="">Selecciona unidad</option>
         {options.map((option) => (
@@ -884,6 +900,15 @@ function SlidersIcon() {
   );
 }
 
+function PencilIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5 fill-none stroke-current stroke-[2]">
+      <path d="M4 20h4l10-10-4-4L4 16v4Z" />
+      <path d="m12 6 4 4" />
+    </svg>
+  );
+}
+
 function validateItemFormData(formData: FormData) {
   const familyId = String(formData.get("familyId") ?? "").trim();
   const itemNumber = String(formData.get("itemNumber") ?? "").trim();
@@ -908,12 +933,12 @@ function validateItemFormData(formData: FormData) {
     return "Selecciona una unidad de medida.";
   }
 
-  if (!isPositiveDecimal(quantity)) {
-    return "Ingresa una cantidad valida mayor que cero.";
+  if (!isNonNegativeDecimal(quantity)) {
+    return "Ingresa una cantidad valida igual o mayor que cero.";
   }
 
-  if (!isPositiveDecimal(unitPrice)) {
-    return "Ingresa un precio unitario valido mayor que cero.";
+  if (!isNonNegativeDecimal(unitPrice)) {
+    return "Ingresa un precio unitario valido igual o mayor que cero.";
   }
 
   return "";
@@ -939,12 +964,26 @@ function validateUnitFormData(formData: FormData) {
   return "";
 }
 
-function isPositiveDecimal(value: string) {
+function isNonNegativeDecimal(value: string) {
   const normalized = value.replace(/\s+/g, "").replace(",", ".");
 
   if (!/^\d+(\.\d+)?$/.test(normalized)) {
     return false;
   }
 
-  return Number(normalized) > 0;
+  return Number(normalized) >= 0;
+}
+
+function toggleQueryParam(key: string, value: string) {
+  const url = new URL(window.location.href);
+
+  if (value) {
+    url.searchParams.set(key, value);
+  } else {
+    url.searchParams.delete(key);
+    url.searchParams.delete("modal");
+    url.searchParams.delete("editItemId");
+  }
+
+  window.location.assign(url.toString());
 }

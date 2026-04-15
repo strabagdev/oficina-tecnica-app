@@ -265,6 +265,9 @@ export default async function ContractItemsPage({
   const draftUnitSortOrder = Array.isArray(resolvedSearchParams?.draftUnitSortOrder)
     ? resolvedSearchParams?.draftUnitSortOrder[0] ?? ""
     : resolvedSearchParams?.draftUnitSortOrder ?? "";
+  const editMode = (Array.isArray(resolvedSearchParams?.editMode)
+    ? resolvedSearchParams?.editMode[0]
+    : resolvedSearchParams?.editMode) === "1";
   const editUnitId = Array.isArray(resolvedSearchParams?.editUnitId)
     ? resolvedSearchParams?.editUnitId[0] ?? ""
     : resolvedSearchParams?.editUnitId ?? "";
@@ -359,6 +362,7 @@ export default async function ContractItemsPage({
                     sortOrder: editUnitSortOrder,
                   }}
                   showTable={false}
+                  editMode={editMode}
                 />
               ) : null}
             </div>
@@ -374,7 +378,7 @@ export default async function ContractItemsPage({
           </div>
 
           {contract.items.length > 0 ? (
-            <ContractItemsTree contractId={id} families={itemTree} />
+            <ContractItemsTree contractId={id} families={itemTree} editMode={editMode} />
           ) : (
             <article className="mt-6 rounded-[1.75rem] border border-dashed border-slate-300 bg-slate-50 p-6">
               <h3 className="text-lg font-semibold text-slate-950">

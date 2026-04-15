@@ -41,9 +41,11 @@ type FamilyRow = {
 export function ContractItemsTree({
   contractId,
   families,
+  editMode = false,
 }: {
   contractId: string;
   families: FamilyRow[];
+  editMode?: boolean;
 }) {
   const [collapsedFamilies, setCollapsedFamilies] = useState<Record<string, boolean>>({});
   const [collapsedSubfamilies, setCollapsedSubfamilies] = useState<Record<string, boolean>>({});
@@ -117,6 +119,7 @@ export function ContractItemsTree({
               <FamilySection
                 key={family.key}
                 family={family}
+                editMode={editMode}
                 collapsed={isFamilyCollapsed}
                 onToggle={() =>
                   setCollapsedFamilies((current) => ({
@@ -142,12 +145,14 @@ export function ContractItemsTree({
 
 function FamilySection({
   family,
+  editMode,
   collapsed,
   onToggle,
   collapsedSubfamilies,
   onToggleSubfamily,
 }: {
   family: FamilyRow;
+  editMode: boolean;
   collapsed: boolean;
   onToggle: () => void;
   collapsedSubfamilies: Record<string, boolean>;
@@ -178,10 +183,10 @@ function FamilySection({
         : (
           <>
             {family.items.map((item) => (
-              <ItemDataRow key={item.id} item={item} indent="pl-6" />
+              <ItemDataRow key={item.id} item={item} indent="pl-6" editMode={editMode} />
             ))}
             {family.groups.map((group) => (
-              <GroupSection key={group.key} group={group} indentLevel="group" />
+              <GroupSection key={group.key} group={group} indentLevel="group" editMode={editMode} />
             ))}
             {family.subfamilies.map((subfamily) => {
               const isSubfamilyCollapsed = collapsedSubfamilies[subfamily.key] ?? false;
@@ -190,6 +195,7 @@ function FamilySection({
                 <SubfamilySection
                   key={subfamily.key}
                   subfamily={subfamily}
+                  editMode={editMode}
                   collapsed={isSubfamilyCollapsed}
                   onToggle={() => onToggleSubfamily(subfamily.key, !isSubfamilyCollapsed)}
                 />
@@ -203,10 +209,12 @@ function FamilySection({
 
 function SubfamilySection({
   subfamily,
+  editMode,
   collapsed,
   onToggle,
 }: {
   subfamily: SubfamilyRow;
+  editMode: boolean;
   collapsed: boolean;
   onToggle: () => void;
 }) {
@@ -228,10 +236,15 @@ function SubfamilySection({
         : (
           <>
             {subfamily.items.map((item) => (
-              <ItemDataRow key={item.id} item={item} indent="pl-10" />
+              <ItemDataRow key={item.id} item={item} indent="pl-10" editMode={editMode} />
             ))}
             {subfamily.groups.map((group) => (
-              <GroupSection key={group.key} group={group} indentLevel="nested-group" />
+              <GroupSection
+                key={group.key}
+                group={group}
+                indentLevel="nested-group"
+                editMode={editMode}
+              />
             ))}
           </>
         )}
@@ -242,9 +255,11 @@ function SubfamilySection({
 function GroupSection({
   group,
   indentLevel,
+  editMode,
 }: {
   group: GroupRow;
   indentLevel: "group" | "nested-group";
+  editMode: boolean;
 }) {
   return (
     <>
@@ -263,6 +278,7 @@ function GroupSection({
           key={item.id}
           item={item}
           indent={indentLevel === "nested-group" ? "pl-16" : "pl-12"}
+          editMode={editMode}
         />
       ))}
     </>
@@ -311,13 +327,20 @@ function HierarchyToggleRow({
 function ItemDataRow({
   item,
   indent,
+  editMode,
 }: {
   item: ItemRow;
   indent: string;
+  editMode: boolean;
 }) {
   return (
     <tr>
-      <td className={`px-4 py-4 font-medium text-slate-900 ${indent}`}>{item.itemNumber}</td>
+      <td className={`px-4 py-4 font-medium text-slate-900 ${indent}`}>
+        <div className="flex items-center gap-2">
+          <span>{item.itemNumber}</span>
+          {editMode ? <TreeEditButton itemId={item.id} /> : null}
+        </div>
+      </td>
       <td className="px-4 py-4 text-slate-600">{item.description}</td>
       <td className="px-4 py-4 text-slate-600">{item.unit}</td>
       <td className="px-4 py-4 text-slate-600">{item.originalQuantity}</td>
@@ -327,5 +350,28 @@ function ItemDataRow({
         {item.consumedQuantity} / {item.consumedAmount}
       </td>
     </tr>
+  );
+}
+
+function TreeEditButton({ itemId }: { itemId: string }) {
+  return (
+    <button
+      type="button"
+      aria-label="Editar partida"
+      title="Editar partida"
+      onClick={() => {
+        const url = new URL(window.location.href);
+        url.searchParams.set("editMode", "1");
+        url.searchParams.set("modal", "edit");
+        url.searchParams.set("editItemId", itemId);
+        window.location.assign(url.toString());
+      }}
+      className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 transition hover:border-slate-900 hover:text-slate-950"
+    >
+      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 fill-none stroke-current stroke-[2]">
+        <path d="M4 20h4l10-10-4-4L4 16v4Z" />
+        <path d="m12 6 4 4" />
+      </svg>
+    </button>
   );
 }

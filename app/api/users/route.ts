@@ -5,12 +5,13 @@ import { hashPassword } from "@/lib/password";
 import { getPrisma } from "@/lib/prisma";
 
 function redirectWithMessage(request: Request, type: "success" | "error", message: string) {
+  const redirectTarget = new URL(request.url).searchParams.get("redirectTo") ?? "/admin/users";
   const params = new URLSearchParams({
     type,
     message,
   });
 
-  return NextResponse.redirect(new URL(`/dashboard?${params.toString()}`, request.url));
+  return NextResponse.redirect(new URL(`${redirectTarget}?${params.toString()}`, request.url));
 }
 
 export async function POST(request: Request) {
@@ -23,6 +24,10 @@ export async function POST(request: Request) {
   const prisma = getPrisma();
   const formData = await request.formData();
   const action = String(formData.get("action") ?? "create");
+  const redirectTo = String(formData.get("redirectTo") ?? "/admin/users");
+  const url = new URL(request.url);
+  url.searchParams.set("redirectTo", redirectTo);
+  const rerouteRequest = new Request(url, request);
 
   if (action === "create") {
     const name = String(formData.get("name") ?? "").trim();
@@ -31,7 +36,7 @@ export async function POST(request: Request) {
     const role = String(formData.get("role") ?? UserRole.VIEWER);
 
     if (!name || !email || !password) {
-      return redirectWithMessage(request, "error", "Completa+nombre%2C+correo+y+contrasena+del+usuario.");
+      return redirectWithMessage(rerouteRequest, "error", "Completa+nombre%2C+correo+y+contrasena+del+usuario.");
     }
 
     try {
@@ -45,16 +50,16 @@ export async function POST(request: Request) {
         },
       });
     } catch {
-      return redirectWithMessage(request, "error", "No+se+pudo+crear+el+usuario.+Revisa+si+el+correo+ya+existe.");
+      return redirectWithMessage(rerouteRequest, "error", "No+se+pudo+crear+el+usuario.+Revisa+si+el+correo+ya+existe.");
     }
 
-    return redirectWithMessage(request, "success", "Usuario+creado+correctamente.");
+    return redirectWithMessage(rerouteRequest, "success", "Usuario+creado+correctamente.");
   }
 
   const userId = String(formData.get("userId") ?? "").trim();
 
   if (!userId) {
-    return redirectWithMessage(request, "error", "Usuario+no+valido+para+la+operacion.");
+    return redirectWithMessage(rerouteRequest, "error", "Usuario+no+valido+para+la+operacion.");
   }
 
   if (action === "toggle-active") {
@@ -78,7 +83,7 @@ export async function POST(request: Request) {
     }
 
     return redirectWithMessage(
-      request,
+      rerouteRequest,
       "success",
       active ? "Usuario+activado." : "Usuario+desactivado+y+sesiones+cerradas.",
     );
@@ -96,14 +101,14 @@ export async function POST(request: Request) {
       },
     });
 
-    return redirectWithMessage(request, "success", "Rol+actualizado.");
+    return redirectWithMessage(rerouteRequest, "success", "Rol+actualizado.");
   }
 
   if (action === "reset-password") {
     const password = String(formData.get("password") ?? "");
 
     if (!password) {
-      return redirectWithMessage(request, "error", "Ingresa+una+nueva+contrasena.");
+      return redirectWithMessage(rerouteRequest, "error", "Ingresa+una+nueva+contrasena.");
     }
 
     await prisma.user.update({
@@ -122,11 +127,11 @@ export async function POST(request: Request) {
     });
 
     return redirectWithMessage(
-      request,
+      rerouteRequest,
       "success",
       "Contrasena+actualizada+y+sesiones+cerradas.",
     );
   }
 
-  return redirectWithMessage(request, "error", "Accion+no+soportada.");
+  return redirectWithMessage(rerouteRequest, "error", "Accion+no+soportada.");
 }

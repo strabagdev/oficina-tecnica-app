@@ -11,6 +11,7 @@ export async function POST(request: Request) {
   }
 
   const formData = await request.formData();
+  const redirectTo = String(formData.get("redirectTo") ?? "/contracts/new");
   const result = await createContractFromForm(formData);
   const params = new URLSearchParams();
 
@@ -22,5 +23,5 @@ export async function POST(request: Request) {
     params.set("message", result.success);
   }
 
-  return NextResponse.redirect(new URL(`/dashboard?${params.toString()}`, request.url));
+  return NextResponse.redirect(new URL(`${redirectTo}?${params.toString()}`, request.url));
 }

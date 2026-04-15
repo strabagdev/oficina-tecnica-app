@@ -79,9 +79,65 @@ model Contract {
   monthlyClosures MonthlyClosure[]
 }
 
+model MeasurementUnit {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  active    Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ItemFamily {
+  id          String          @id @default(cuid())
+  code        String          @unique
+  name        String
+  wbs         String?
+  active      Boolean         @default(true)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  subfamilies ItemSubfamily[]
+}
+
+model ItemSubfamily {
+  id        String            @id @default(cuid())
+  familyId  String
+  code      String
+  name      String
+  wbs       String?
+  active    Boolean           @default(true)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+  family    ItemFamily        @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  groups    ItemGroupCatalog[]
+
+  @@unique([familyId, code])
+  @@index([familyId])
+}
+
+model ItemGroupCatalog {
+  id          String         @id @default(cuid())
+  subfamilyId String
+  code        String
+  name        String
+  wbs         String?
+  active      Boolean        @default(true)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  subfamily   ItemSubfamily  @relation(fields: [subfamilyId], references: [id], onDelete: Cascade)
+
+  @@unique([subfamilyId, code])
+  @@index([subfamilyId])
+}
+
 model ContractItem {
   id                String               @id @default(cuid())
   contractId        String
+  family            String?
+  subfamily         String?
+  itemGroup         String?
+  itemNumber        String
   itemCode          String
   description       String
   unit              String?
@@ -95,6 +151,7 @@ model ContractItem {
   changes           ContractChange[]
   closureSnapshots  MonthlyClosureItemSnapshot[]
 
+  @@unique([contractId, itemNumber])
   @@unique([contractId, itemCode])
   @@index([contractId])
 }
@@ -145,6 +202,7 @@ model MonthlyClosureItemSnapshot {
   id                      String          @id @default(cuid())
   monthlyClosureId        String
   contractItemId          String
+  itemNumber              String
   itemCode                String
   description             String
   unit                    String?

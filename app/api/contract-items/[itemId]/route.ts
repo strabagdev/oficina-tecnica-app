@@ -1,18 +1,22 @@
 import { NextResponse } from "next/server";
 import { UserRole } from "@prisma/client";
 import { getCurrentUser } from "@/lib/auth";
-import { createMonthlyClosureFromForm } from "@/lib/mutations";
+import { updateContractItemFromForm } from "@/lib/mutations";
 
-export async function POST(request: Request) {
+export async function POST(
+  request: Request,
+  context: { params: Promise<{ itemId: string }> },
+) {
   const user = await getCurrentUser();
 
   if (!user || user.role !== UserRole.ADMIN) {
-    return NextResponse.redirect(new URL("/dashboard?type=error&message=No+tienes+permiso+para+registrar+cierres.", request.url));
+    return NextResponse.redirect(new URL("/dashboard?type=error&message=No+tienes+permiso+para+editar+partidas.", request.url));
   }
 
+  const { itemId } = await context.params;
   const formData = await request.formData();
   const redirectTo = String(formData.get("redirectTo") ?? "/contracts");
-  const result = await createMonthlyClosureFromForm(formData);
+  const result = await updateContractItemFromForm(itemId, formData);
   const params = new URLSearchParams();
 
   if ("error" in result) {

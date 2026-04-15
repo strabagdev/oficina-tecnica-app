@@ -24,9 +24,23 @@ function createPrismaClient() {
   });
 }
 
+function hasLatestDelegates(prisma: PrismaClient) {
+  return (
+    "measurementUnit" in prisma &&
+    "itemFamily" in prisma &&
+    "itemSubfamily" in prisma &&
+    "itemGroupCatalog" in prisma
+  );
+}
+
 export function getPrisma() {
   if (globalForPrisma.prisma) {
-    return globalForPrisma.prisma;
+    if (hasLatestDelegates(globalForPrisma.prisma)) {
+      return globalForPrisma.prisma;
+    }
+
+    void globalForPrisma.prisma.$disconnect().catch(() => undefined);
+    globalForPrisma.prisma = undefined;
   }
 
   const prisma = createPrismaClient();

@@ -1,9 +1,16 @@
 import "server-only";
 
 import { ContractStatus, DiscountMode, Prisma } from "@prisma/client";
+import * as XLSX from "xlsx";
+import { getItemTaxonomyOptions } from "@/lib/item-taxonomy";
 import { getPrisma } from "@/lib/prisma";
+import { getMeasurementUnitOptions } from "@/lib/measurement-units";
 
 type ParsedItemLine = {
+  family: string;
+  subfamily: string;
+  itemGroup: string;
+  itemNumber: string;
   itemCode: string;
   description: string;
   unit: string;
@@ -57,6 +64,7 @@ type ConsumptionMutationRow = {
 };
 
 type ClosureSnapshotMutationRow = {
+  itemNumber: string;
   contractItemId: string;
   itemCode: string;
   description: string;
@@ -73,6 +81,39 @@ type ClosureSnapshotMutationRow = {
   discountAmount: Prisma.Decimal;
   netPayableQuantity: Prisma.Decimal;
   netPayableAmount: Prisma.Decimal;
+};
+
+type ContractItemCreateRow = {
+  contractId: string;
+  family: string | null;
+  subfamily: string | null;
+  itemGroup: string | null;
+  itemNumber: string;
+  itemCode: string;
+  description: string;
+  unit: string | null;
+  originalQuantity: Prisma.Decimal;
+  unitPrice: Prisma.Decimal;
+  originalAmount: Prisma.Decimal;
+};
+
+type NormalizedItemInput = {
+  family: string | null;
+  subfamily: string | null;
+  itemGroup: string | null;
+  itemNumber: string;
+  itemCode: string;
+  description: string;
+  unit: string | null;
+  quantity: Prisma.Decimal;
+  unitPrice: Prisma.Decimal;
+  originalAmount: Prisma.Decimal;
+};
+
+type ResolvedItemTaxonomy = {
+  family: string;
+  subfamily: string | null;
+  itemGroup: string | null;
 };
 
 function parseDecimal(value: string) {
@@ -95,19 +136,23 @@ function parseItemLines(source: string): ParsedItemsResult {
   const items: ParsedItemLine[] = [];
 
   for (const line of lines) {
-    const [itemCode, description, unit, quantity, unitPrice] = line
+    const [family, subfamily, itemGroup, itemNumber, description, unit, quantity, unitPrice] = line
       .split("|")
       .map((part) => part.trim());
 
-    if (!itemCode || !description || !unit || !quantity || !unitPrice) {
+    if (!itemNumber || !description || !unit || !quantity || !unitPrice) {
       return {
         error:
-          "Cada item debe venir como codigo|descripcion|unidad|cantidad|precioUnitario.",
+          "Cada item debe venir como familia|subfamilia|grupo|numeroItem|descripcion|unidad|cantidad|precioUnitario.",
       };
     }
 
     items.push({
-      itemCode,
+      family: family ?? "",
+      subfamily: subfamily ?? "",
+      itemGroup: itemGroup ?? "",
+      itemNumber,
+      itemCode: itemNumber,
       description,
       unit,
       quantity,
@@ -122,6 +167,289 @@ function parseItemLines(source: string): ParsedItemsResult {
   }
 
   return { items };
+}
+
+function getTextCell(record: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = record[key];
+
+    if (value === null || value === undefined) {
+      continue;
+    }
+
+    const text = String(value).trim();
+
+    if (text) {
+      return text;
+    }
+  }
+
+  return "";
+}
+
+function normalizeItemValues(
+  family: string | null,
+  subfamily: string | null,
+  itemGroup: string | null,
+  itemNumber: string,
+  description: string,
+  unit: string,
+  quantity: string,
+  unitPrice: string,
+): { error: string } | { item: NormalizedItemInput } {
+  if (!itemNumber || !description || !quantity || !unitPrice) {
+    return {
+      error:
+        "Completa numero de itemizado, descripcion, cantidad y precio unitario de la partida.",
+    };
+  }
+
+  const itemCode = itemNumber;
+
+  const quantityValue = parseDecimal(quantity);
+  const unitPriceValue = parseDecimal(unitPrice);
+
+  if (!quantityValue || !unitPriceValue) {
+    return {
+      error: `No pude interpretar cantidad o precio del item ${itemCode}.`,
+    };
+  }
+
+  return {
+    item: {
+      family: (family ?? "").trim() || null,
+      subfamily: (subfamily ?? "").trim() || null,
+      itemGroup: (itemGroup ?? "").trim() || null,
+      itemNumber,
+      itemCode,
+      description,
+      unit: unit.trim() || null,
+      quantity: quantityValue,
+      unitPrice: unitPriceValue,
+      originalAmount: quantityValue.mul(unitPriceValue),
+    },
+  };
+}
+
+function buildCreateRow(
+  contractId: string,
+  item: NormalizedItemInput,
+): ContractItemCreateRow {
+  return {
+    contractId,
+    family: item.family,
+    subfamily: item.subfamily,
+    itemGroup: item.itemGroup,
+    itemNumber: item.itemNumber,
+    itemCode: item.itemCode,
+    description: item.description,
+    unit: item.unit,
+    originalQuantity: item.quantity,
+    unitPrice: item.unitPrice,
+    originalAmount: item.originalAmount,
+  };
+}
+
+async function validateMeasurementUnit(unit: string | null) {
+  if (!unit) {
+    return "Selecciona una unidad de medida valida para la partida.";
+  }
+
+  const units = await getMeasurementUnitOptions();
+  const exists = units.some((option: { code: string }) => option.code === unit);
+
+  if (!exists) {
+    return `La unidad ${unit} no existe en el catalogo activo.`;
+  }
+
+  return null;
+}
+
+async function resolveItemTaxonomy(
+  formData: FormData,
+): Promise<{ error: string } | ResolvedItemTaxonomy> {
+  const familyId = String(formData.get("familyId") ?? "").trim();
+  const subfamilyId = String(formData.get("subfamilyId") ?? "").trim();
+  const groupId = String(formData.get("groupId") ?? "").trim();
+
+  if (!familyId) {
+    return {
+      error: "Selecciona al menos una familia para la partida.",
+    };
+  }
+
+  const taxonomy = await getItemTaxonomyOptions();
+  const family = taxonomy.families.find(
+    (item: (typeof taxonomy.families)[number]) => item.id === familyId,
+  );
+
+  if (!family) {
+    return {
+      error: "La jerarquia seleccionada no existe en el catalogo activo.",
+    };
+  }
+
+  if (!subfamilyId) {
+    if (groupId) {
+      return {
+        error: "No puedes seleccionar un grupo sin antes seleccionar una subfamilia.",
+      };
+    }
+
+    return {
+      family: family.name,
+      subfamily: null,
+      itemGroup: null,
+    };
+  }
+
+  const subfamily = taxonomy.subfamilies.find(
+    (item: (typeof taxonomy.subfamilies)[number]) => item.id === subfamilyId,
+  );
+
+  if (!subfamily) {
+    return {
+      error: "La subfamilia seleccionada no existe en el catalogo activo.",
+    };
+  }
+
+  if (subfamily.familyId !== family.id) {
+    return {
+      error: "La subfamilia seleccionada no pertenece a la familia indicada.",
+    };
+  }
+
+  if (!groupId) {
+    return {
+      family: family.name,
+      subfamily: subfamily.name,
+      itemGroup: null,
+    };
+  }
+
+  const group = taxonomy.groups.find(
+    (item: (typeof taxonomy.groups)[number]) => item.id === groupId,
+  );
+
+  if (!group) {
+    return {
+      error: "El grupo seleccionado no existe en el catalogo activo.",
+    };
+  }
+
+  if (group.subfamilyId !== subfamily.id) {
+    return {
+      error: "El grupo seleccionado no pertenece a la subfamilia indicada.",
+    };
+  }
+
+  return {
+    family: family.name,
+    subfamily: subfamily.name,
+    itemGroup: group.name,
+  };
+}
+
+async function resolveItemTaxonomyFromLabels(
+  familyLabel: string,
+  subfamilyLabel: string,
+  groupLabel: string,
+): Promise<{ error: string } | ResolvedItemTaxonomy> {
+  if (!familyLabel.trim()) {
+    return {
+      error: "Cada partida importada debe indicar al menos una familia.",
+    };
+  }
+
+  const taxonomy = await getItemTaxonomyOptions();
+  const family = taxonomy.families.find(
+    (item: (typeof taxonomy.families)[number]) =>
+      item.name.toLowerCase() === familyLabel.toLowerCase() ||
+      (item.wbs?.toLowerCase() ?? "") === familyLabel.toLowerCase(),
+  );
+
+  if (!family) {
+    return {
+      error: `La familia ${familyLabel} no existe en el catalogo activo.`,
+    };
+  }
+
+  if (!subfamilyLabel.trim()) {
+    if (groupLabel.trim()) {
+      return {
+        error: `El grupo ${groupLabel} requiere que tambien informes una subfamilia.`,
+      };
+    }
+
+    return {
+      family: family.name,
+      subfamily: null,
+      itemGroup: null,
+    };
+  }
+
+  const subfamily = taxonomy.subfamilies.find(
+    (item: (typeof taxonomy.subfamilies)[number]) =>
+      item.familyId === family.id &&
+      (item.name.toLowerCase() === subfamilyLabel.toLowerCase() ||
+        (item.wbs?.toLowerCase() ?? "") === subfamilyLabel.toLowerCase()),
+  );
+
+  if (!subfamily) {
+    return {
+      error: `La subfamilia ${subfamilyLabel} no pertenece a la familia ${familyLabel}.`,
+    };
+  }
+
+  if (!groupLabel.trim()) {
+    return {
+      family: family.name,
+      subfamily: subfamily.name,
+      itemGroup: null,
+    };
+  }
+
+  const group = taxonomy.groups.find(
+    (item: (typeof taxonomy.groups)[number]) =>
+      item.subfamilyId === subfamily.id &&
+      (item.name.toLowerCase() === groupLabel.toLowerCase() ||
+        (item.wbs?.toLowerCase() ?? "") === groupLabel.toLowerCase()),
+  );
+
+  if (!group) {
+    return {
+      error: `El grupo ${groupLabel} no pertenece a la subfamilia ${subfamilyLabel}.`,
+    };
+  }
+
+  return {
+    family: family.name,
+    subfamily: subfamily.name,
+    itemGroup: group.name,
+  };
+}
+
+async function recalculateContractOriginalAmount(
+  tx: Prisma.TransactionClient,
+  contractId: string,
+) {
+  const aggregate = await tx.contractItem.aggregate({
+    where: {
+      contractId,
+    },
+    _sum: {
+      originalAmount: true,
+    },
+  });
+
+  await tx.contract.update({
+    where: {
+      id: contractId,
+    },
+    data: {
+      originalAmount: aggregate._sum.originalAmount ?? new Prisma.Decimal(0),
+    },
+  });
 }
 
 function parseClosureLines(source: string): ParsedClosureRowsResult {
@@ -177,44 +505,11 @@ export async function createContractFromForm(
   const currency = String(formData.get("currency") ?? "CLP").trim() || "CLP";
   const statusValue = String(formData.get("status") ?? ContractStatus.DRAFT);
   const description = String(formData.get("description") ?? "").trim();
-  const itemsSource = String(formData.get("items") ?? "");
 
   if (!code || !name || !clientName) {
     return {
       error: "Completa codigo, nombre del contrato y mandante.",
     };
-  }
-
-  const parsedItems = parseItemLines(itemsSource);
-
-  if ("error" in parsedItems) {
-    return { error: parsedItems.error };
-  }
-
-  const itemPayload = [];
-  let originalAmount = new Prisma.Decimal(0);
-
-  for (const item of parsedItems.items) {
-    const quantity = parseDecimal(item.quantity);
-    const unitPrice = parseDecimal(item.unitPrice);
-
-    if (!quantity || !unitPrice) {
-      return {
-        error: `No pude interpretar cantidad o precio del item ${item.itemCode}.`,
-      };
-    }
-
-    const itemAmount = quantity.mul(unitPrice);
-    originalAmount = originalAmount.add(itemAmount);
-
-    itemPayload.push({
-      itemCode: item.itemCode,
-      description: item.description,
-      unit: item.unit,
-      originalQuantity: quantity,
-      unitPrice,
-      originalAmount: itemAmount,
-    });
   }
 
   const prisma = getPrisma();
@@ -230,10 +525,7 @@ export async function createContractFromForm(
         status: Object.values(ContractStatus).includes(statusValue as ContractStatus)
           ? (statusValue as ContractStatus)
           : ContractStatus.DRAFT,
-        originalAmount,
-        items: {
-          create: itemPayload,
-        },
+        originalAmount: new Prisma.Decimal(0),
       },
     });
   } catch (error) {
@@ -249,7 +541,399 @@ export async function createContractFromForm(
   }
 
   return {
-    success: `Contrato ${code} creado con ${itemPayload.length} items.`,
+    success: `Contrato ${code} creado. Ahora puedes cargar el itemizado en su modulo de partidas.`,
+  };
+}
+
+export async function updateContractFromForm(
+  contractId: string,
+  formData: FormData,
+): Promise<MutationResult> {
+  const code = String(formData.get("code") ?? "").trim();
+  const name = String(formData.get("name") ?? "").trim();
+  const clientName = String(formData.get("clientName") ?? "").trim();
+  const currency = String(formData.get("currency") ?? "CLP").trim() || "CLP";
+  const statusValue = String(formData.get("status") ?? ContractStatus.DRAFT);
+  const description = String(formData.get("description") ?? "").trim();
+  const startDateValue = String(formData.get("startDate") ?? "").trim();
+  const endDateValue = String(formData.get("endDate") ?? "").trim();
+
+  if (!contractId || !code || !name || !clientName) {
+    return {
+      error: "Completa codigo, nombre del contrato y mandante.",
+    };
+  }
+
+  const startDate = startDateValue ? new Date(startDateValue) : null;
+  const endDate = endDateValue ? new Date(endDateValue) : null;
+
+  if (startDate && Number.isNaN(startDate.getTime())) {
+    return {
+      error: "La fecha de inicio no es valida.",
+    };
+  }
+
+  if (endDate && Number.isNaN(endDate.getTime())) {
+    return {
+      error: "La fecha de termino no es valida.",
+    };
+  }
+
+  const prisma = getPrisma();
+
+  try {
+    await prisma.contract.update({
+      where: {
+        id: contractId,
+      },
+      data: {
+        code,
+        name,
+        clientName,
+        description: description || null,
+        currency,
+        startDate,
+        endDate,
+        status: Object.values(ContractStatus).includes(statusValue as ContractStatus)
+          ? (statusValue as ContractStatus)
+          : ContractStatus.DRAFT,
+      },
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("Unique constraint")) {
+      return {
+        error: "Ya existe otro contrato con ese codigo.",
+      };
+    }
+
+    return {
+      error: "No pude actualizar la cabecera del contrato.",
+    };
+  }
+
+  return {
+    success: `Cabecera del contrato ${code} actualizada.`,
+  };
+}
+
+export async function createContractItemsFromForm(
+  formData: FormData,
+): Promise<MutationResult> {
+  const contractId = String(formData.get("contractId") ?? "").trim();
+
+  if (!contractId) {
+    return {
+      error: "Contrato no valido para cargar partidas.",
+    };
+  }
+
+  const prisma = getPrisma();
+  const contract = await prisma.contract.findUnique({
+    where: {
+      id: contractId,
+    },
+    select: {
+      id: true,
+      code: true,
+    },
+  });
+
+  if (!contract) {
+    return {
+      error: "No encontre el contrato seleccionado.",
+    };
+  }
+
+  const itemNumber = String(formData.get("itemNumber") ?? "").trim();
+  const description = String(formData.get("description") ?? "").trim();
+  const unit = String(formData.get("unit") ?? "").trim();
+  const quantity = String(formData.get("quantity") ?? "").trim();
+  const unitPrice = String(formData.get("unitPrice") ?? "").trim();
+  const taxonomy = await resolveItemTaxonomy(formData);
+
+  if ("error" in taxonomy) {
+    return taxonomy;
+  }
+  const normalized = normalizeItemValues(
+    taxonomy.family,
+    taxonomy.subfamily,
+    taxonomy.itemGroup,
+    itemNumber,
+    description,
+    unit,
+    quantity,
+    unitPrice,
+  );
+
+  if ("error" in normalized) {
+    return { error: normalized.error };
+  }
+
+  const unitValidation = await validateMeasurementUnit(normalized.item.unit);
+
+  if (unitValidation) {
+    return { error: unitValidation };
+  }
+
+  const itemPayload = buildCreateRow(contractId, normalized.item);
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.contractItem.create({
+        data: itemPayload,
+      });
+      await recalculateContractOriginalAmount(tx, contractId);
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("Unique constraint")) {
+      return {
+        error: "Hay numeros de itemizado repetidos dentro del contrato.",
+      };
+    }
+
+    return {
+      error: "No pude cargar el itemizado para este contrato.",
+    };
+  }
+
+  return {
+    success: `Se agrego la partida ${normalized.item.itemNumber} en ${contract.code}.`,
+  };
+}
+
+export async function updateContractItemFromForm(
+  itemId: string,
+  formData: FormData,
+): Promise<MutationResult> {
+  const contractId = String(formData.get("contractId") ?? "").trim();
+  const itemNumber = String(formData.get("itemNumber") ?? "").trim();
+  const description = String(formData.get("description") ?? "").trim();
+  const unit = String(formData.get("unit") ?? "").trim();
+  const quantity = String(formData.get("quantity") ?? "").trim();
+  const unitPrice = String(formData.get("unitPrice") ?? "").trim();
+  const taxonomy = await resolveItemTaxonomy(formData);
+
+  if ("error" in taxonomy) {
+    return taxonomy;
+  }
+
+  if (!contractId || !itemId) {
+    return {
+      error: "Partida no valida para editar.",
+    };
+  }
+
+  const normalized = normalizeItemValues(
+    taxonomy.family,
+    taxonomy.subfamily,
+    taxonomy.itemGroup,
+    itemNumber,
+    description,
+    unit,
+    quantity,
+    unitPrice,
+  );
+
+  if ("error" in normalized) {
+    return { error: normalized.error };
+  }
+
+  const unitValidation = await validateMeasurementUnit(normalized.item.unit);
+
+  if (unitValidation) {
+    return { error: unitValidation };
+  }
+
+  const prisma = getPrisma();
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.contractItem.update({
+        where: {
+          id: itemId,
+        },
+        data: {
+          family: normalized.item.family,
+          subfamily: normalized.item.subfamily,
+          itemGroup: normalized.item.itemGroup,
+          itemNumber: normalized.item.itemNumber,
+          itemCode: normalized.item.itemCode,
+          description: normalized.item.description,
+          unit: normalized.item.unit,
+          originalQuantity: normalized.item.quantity,
+          unitPrice: normalized.item.unitPrice,
+          originalAmount: normalized.item.originalAmount,
+        },
+      });
+
+      await recalculateContractOriginalAmount(tx, contractId);
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("Unique constraint")) {
+      return {
+        error: "Ya existe otra partida con ese numero de itemizado dentro del contrato.",
+      };
+    }
+
+    return {
+      error: "No pude actualizar la partida.",
+    };
+  }
+
+  return {
+    success: `Se actualizo la partida ${normalized.item.itemNumber}.`,
+  };
+}
+
+export async function importContractItemsFromFile(
+  formData: FormData,
+): Promise<MutationResult> {
+  const contractId = String(formData.get("contractId") ?? "").trim();
+  const file = formData.get("file");
+
+  if (!contractId) {
+    return {
+      error: "Contrato no valido para importar partidas.",
+    };
+  }
+
+  if (!(file instanceof File) || file.size === 0) {
+    return {
+      error: "Selecciona un archivo Excel valido para importar.",
+    };
+  }
+
+  const prisma = getPrisma();
+  const contract = await prisma.contract.findUnique({
+    where: {
+      id: contractId,
+    },
+    select: {
+      id: true,
+      code: true,
+    },
+  });
+
+  if (!contract) {
+    return {
+      error: "No encontre el contrato seleccionado.",
+    };
+  }
+
+  let rows: Record<string, unknown>[];
+
+  try {
+    const bytes = await file.arrayBuffer();
+    const workbook = XLSX.read(Buffer.from(bytes), { type: "buffer" });
+    const sheetName = workbook.SheetNames[0];
+
+    if (!sheetName) {
+      return {
+        error: "El archivo Excel no contiene hojas para importar.",
+      };
+    }
+
+    rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[sheetName], {
+      defval: "",
+    });
+  } catch {
+    return {
+      error: "No pude leer el archivo Excel seleccionado.",
+    };
+  }
+
+  if (rows.length === 0) {
+    return {
+      error: "El archivo Excel no trae filas de partidas.",
+    };
+  }
+
+  const itemPayload: ContractItemCreateRow[] = [];
+
+  for (const row of rows) {
+    const itemNumber = getTextCell(row, [
+      "numeroItem",
+      "numero_item",
+      "numero",
+      "Numero",
+      "Número",
+      "itemNumber",
+      "item",
+      "Item",
+    ]);
+    const family = getTextCell(row, ["familia", "Familia", "family"]);
+    const subfamily = getTextCell(row, ["subfamilia", "Subfamilia", "subfamily"]);
+    const itemGroup = getTextCell(row, ["grupo", "Grupo", "itemGroup", "group"]);
+    const description = getTextCell(row, [
+      "descripcion",
+      "Descripción",
+      "DESCRIPCION",
+      "description",
+      "Descripcion",
+    ]);
+    const unit = getTextCell(row, ["unidad", "Unidad", "unit", "UM"]);
+    const quantity = getTextCell(row, ["cantidad", "Cantidad", "quantity"]);
+    const unitPrice = getTextCell(row, [
+      "precioUnitario",
+      "precio_unitario",
+      "PrecioUnitario",
+      "precio",
+      "Precio",
+      "unitPrice",
+    ]);
+
+    const taxonomy = await resolveItemTaxonomyFromLabels(family, subfamily, itemGroup);
+
+    if ("error" in taxonomy) {
+      return { error: taxonomy.error };
+    }
+
+    const normalized = normalizeItemValues(
+      taxonomy.family,
+      taxonomy.subfamily,
+      taxonomy.itemGroup,
+      itemNumber,
+      description,
+      unit,
+      quantity,
+      unitPrice,
+    );
+
+    if ("error" in normalized) {
+      return { error: normalized.error };
+    }
+
+    const unitValidation = await validateMeasurementUnit(normalized.item.unit);
+
+    if (unitValidation) {
+      return { error: unitValidation };
+    }
+
+    itemPayload.push(buildCreateRow(contractId, normalized.item));
+  }
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.contractItem.createMany({
+        data: itemPayload,
+      });
+      await recalculateContractOriginalAmount(tx, contractId);
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("Unique constraint")) {
+      return {
+        error:
+          "La importacion contiene numeros de itemizado repetidos o ya existentes en el contrato.",
+      };
+    }
+
+    return {
+      error: "No pude importar el archivo Excel de partidas.",
+    };
+  }
+
+  return {
+    success: `Importacion completada: ${itemPayload.length} partidas cargadas en ${contract.code}.`,
   };
 }
 
@@ -283,7 +967,7 @@ export async function createMonthlyClosureFromForm(
     include: {
       items: {
         orderBy: {
-          itemCode: "asc",
+          itemNumber: "asc",
         },
         include: {
           consumptions: true,
@@ -298,7 +982,12 @@ export async function createMonthlyClosureFromForm(
     };
   }
 
-  const itemMap = new Map(contract.items.map((item) => [item.itemCode, item]));
+  const itemMap = new Map(
+    contract.items.flatMap((item) => [
+      [item.itemNumber, item] as const,
+      [item.itemCode, item] as const,
+    ]),
+  );
   const consumptionRows: ConsumptionMutationRow[] = [];
   const snapshotRows: ClosureSnapshotMutationRow[] = [];
   let grossAmount = new Prisma.Decimal(0);
@@ -390,6 +1079,7 @@ export async function createMonthlyClosureFromForm(
     });
 
     snapshotRows.push({
+      itemNumber: contractItem.itemNumber,
       contractItemId: contractItem.id,
       itemCode: contractItem.itemCode,
       description: contractItem.description,

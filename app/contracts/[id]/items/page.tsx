@@ -192,7 +192,7 @@ export default async function ContractItemsPage({
   const { id } = await params;
   const [contract, itemTaxonomy, measurementUnits] = await Promise.all([
     getContractDetailSnapshot(id),
-    getItemTaxonomyOptions(),
+    getItemTaxonomyOptions(id),
     user.role === UserRole.ADMIN ? getMeasurementUnitSnapshot() : Promise.resolve([]),
   ]);
   const resolvedSearchParams = searchParams ? await searchParams : undefined;
@@ -285,6 +285,8 @@ export default async function ContractItemsPage({
     notFound();
   }
 
+  const usesContractTaxonomy = itemTaxonomy.scope.contractId === id;
+  const hasContractTaxonomy = itemTaxonomy.families.length > 0;
   const itemTree = buildItemTree(contract.items, itemTaxonomy);
 
   return (
@@ -310,7 +312,7 @@ export default async function ContractItemsPage({
         </div>
       }
     >
-      <ContractNav contractId={id} active="items" />
+      <ContractNav contractId={id} active="items" userRole={user.role} />
       <FlashBanner type={flashType} message={flashMessage} />
 
       <section>
@@ -363,13 +365,38 @@ export default async function ContractItemsPage({
                   }}
                   showTable={false}
                   editMode={editMode}
+                  taxonomyReady={hasContractTaxonomy}
                 />
               ) : null}
             </div>
             <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-              <p className="text-sm leading-7 text-slate-600">
-                Este modulo te muestra las partidas base y cuanto se ha consumido a la fecha.
-              </p>
+              <div className="flex flex-col gap-2">
+                <p className="text-sm leading-7 text-slate-600">
+                  Este modulo te muestra las partidas base y cuanto se ha consumido a la fecha.
+                </p>
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <Pill
+                    label={
+                      hasContractTaxonomy && usesContractTaxonomy
+                        ? "Jerarquia propia activa"
+                        : "Jerarquia propia pendiente"
+                    }
+                  />
+                  {user.role === UserRole.ADMIN ? (
+                    <Link
+                      href={`/contracts/${id}/taxonomy`}
+                      className="rounded-full border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 transition hover:border-slate-900 hover:text-slate-950"
+                    >
+                      Administrar jerarquia
+                    </Link>
+                  ) : null}
+                </div>
+                {!hasContractTaxonomy ? (
+                  <p className="text-xs leading-6 text-amber-700">
+                    Este contrato aun no tiene jerarquia propia. Antes de cargar o reclasificar partidas, crea su estructura WBS en la administracion de jerarquia del contrato.
+                  </p>
+                ) : null}
+              </div>
               <div className="flex flex-wrap gap-2 text-xs">
                 <Pill label={`${contract.itemCount} partidas`} />
                 <Pill label={`${contract.closureCount} cierres`} />
@@ -385,7 +412,7 @@ export default async function ContractItemsPage({
                 Aun no hay partidas cargadas
               </h3>
               <p className="mt-2 text-sm leading-7 text-slate-600">
-                Este contrato ya existe, pero su itemizado todavia no ha sido ingresado. Puedes cargarlo cuando quieras desde esta misma pantalla.
+                Este contrato ya existe, pero su itemizado todavia no ha sido ingresado. {hasContractTaxonomy ? "Ya puedes cargarlo desde esta misma pantalla." : "Primero define su jerarquia WBS y luego carga las partidas."}
               </p>
             </article>
           )}

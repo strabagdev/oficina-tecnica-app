@@ -47,6 +47,7 @@ type MutationResult = {
   error: string;
 } | {
   success: string;
+  redirectTo?: string;
 };
 
 type ConsumptionMutationRow = {
@@ -262,6 +263,7 @@ async function validateMeasurementUnit(unit: string | null) {
 async function resolveItemTaxonomy(
   formData: FormData,
 ): Promise<{ error: string } | ResolvedItemTaxonomy> {
+  const contractId = String(formData.get("contractId") ?? "").trim();
   const familyId = String(formData.get("familyId") ?? "").trim();
   const subfamilyId = String(formData.get("subfamilyId") ?? "").trim();
   const groupId = String(formData.get("groupId") ?? "").trim();
@@ -272,7 +274,7 @@ async function resolveItemTaxonomy(
     };
   }
 
-  const taxonomy = await getItemTaxonomyOptions();
+  const taxonomy = await getItemTaxonomyOptions(contractId || null);
   const family = taxonomy.families.find(
     (item: (typeof taxonomy.families)[number]) => item.id === familyId,
   );
@@ -345,6 +347,7 @@ async function resolveItemTaxonomy(
 }
 
 async function resolveItemTaxonomyFromLabels(
+  contractId: string,
   familyLabel: string,
   subfamilyLabel: string,
   groupLabel: string,
@@ -355,7 +358,7 @@ async function resolveItemTaxonomyFromLabels(
     };
   }
 
-  const taxonomy = await getItemTaxonomyOptions();
+  const taxonomy = await getItemTaxonomyOptions(contractId);
   const family = taxonomy.families.find(
     (item: (typeof taxonomy.families)[number]) =>
       item.name.toLowerCase() === familyLabel.toLowerCase() ||
@@ -509,7 +512,7 @@ export async function createContractFromForm(
   const prisma = getPrisma();
 
   try {
-    await prisma.contract.create({
+    const contract = await prisma.contract.create({
       data: {
         code,
         name,
@@ -522,6 +525,11 @@ export async function createContractFromForm(
         originalAmount: new Prisma.Decimal(0),
       },
     });
+
+    return {
+      success: `Contrato ${code} creado. Ahora define su jerarquia WBS antes de cargar partidas.`,
+      redirectTo: `/contracts/${contract.id}/taxonomy`,
+    };
   } catch (error) {
     if (error instanceof Error && error.message.includes("Unique constraint")) {
       return {
@@ -535,7 +543,7 @@ export async function createContractFromForm(
   }
 
   return {
-    success: `Contrato ${code} creado. Ahora puedes cargar el itemizado en su modulo de partidas.`,
+    success: `Contrato ${code} creado. Ahora define su jerarquia WBS antes de cargar partidas.`,
   };
 }
 
@@ -876,7 +884,12 @@ export async function importContractItemsFromFile(
       "unitPrice",
     ]);
 
-    const taxonomy = await resolveItemTaxonomyFromLabels(family, subfamily, itemGroup);
+    const taxonomy = await resolveItemTaxonomyFromLabels(
+      contractId,
+      family,
+      subfamily,
+      itemGroup,
+    );
 
     if ("error" in taxonomy) {
       return { error: taxonomy.error };

@@ -95,6 +95,7 @@ export function ContractItemsAdminClient({
   unitEditDraft,
   showTable = true,
   editMode = false,
+  taxonomyReady = true,
 }: {
   contractId: string;
   contractCode: string;
@@ -114,6 +115,7 @@ export function ContractItemsAdminClient({
   unitEditDraft: UnitEditDraftState;
   showTable?: boolean;
   editMode?: boolean;
+  taxonomyReady?: boolean;
 }) {
   const [activeModal, setActiveModal] = useState<ModalState>(null);
   const [showCreateUnitForm, setShowCreateUnitForm] = useState(false);
@@ -170,6 +172,7 @@ export function ContractItemsAdminClient({
           label="Nueva partida"
           onClick={() => setActiveModal({ type: "create" })}
           tone="primary"
+          disabled={!taxonomyReady}
         >
           <PlusIcon />
         </IconActionButton>
@@ -177,12 +180,14 @@ export function ContractItemsAdminClient({
           label={editMode ? "Salir de modo edición" : "Entrar en modo edición"}
           onClick={() => toggleQueryParam("editMode", editMode ? "" : "1")}
           tone={editMode ? "primary" : "default"}
+          disabled={!taxonomyReady}
         >
           <PencilIcon />
         </IconActionButton>
         <IconActionButton
           label="Importar XLSX"
           onClick={() => setActiveModal({ type: "import" })}
+          disabled={!taxonomyReady}
         >
           <UploadIcon />
         </IconActionButton>
@@ -839,11 +844,13 @@ function IconActionButton({
   onClick,
   tone = "default",
   children,
+  disabled = false,
 }: {
   label: string;
   onClick: () => void;
   tone?: "default" | "primary" | "teal";
   children: ReactNode;
+  disabled?: boolean;
 }) {
   const className =
     tone === "primary"
@@ -858,7 +865,12 @@ function IconActionButton({
       onClick={onClick}
       aria-label={label}
       title={label}
-      className={`inline-flex h-11 w-11 items-center justify-center rounded-full transition ${className}`}
+      disabled={disabled}
+      className={`inline-flex h-11 w-11 items-center justify-center rounded-full transition ${
+        disabled
+          ? "cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-400"
+          : className
+      }`}
     >
       <span aria-hidden="true">{children}</span>
     </button>

@@ -74,6 +74,7 @@ model Contract {
   status         ContractStatus       @default(DRAFT)
   createdAt      DateTime             @default(now())
   updatedAt      DateTime             @updatedAt
+  itemFamilies   ItemFamily[]
   items          ContractItem[]
   changes        ContractChange[]
   monthlyClosures MonthlyClosure[]
@@ -91,13 +92,18 @@ model MeasurementUnit {
 
 model ItemFamily {
   id          String          @id @default(cuid())
-  code        String          @unique
+  contractId  String?
+  code        String
   name        String
   wbs         String?
   active      Boolean         @default(true)
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
+  contract    Contract?       @relation(fields: [contractId], references: [id], onDelete: Cascade)
   subfamilies ItemSubfamily[]
+
+  @@unique([contractId, code])
+  @@index([contractId])
 }
 
 model ItemSubfamily {

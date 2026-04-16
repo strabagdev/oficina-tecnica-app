@@ -1,22 +1,44 @@
 import "server-only";
 
+import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 
-export async function getItemTaxonomyOptions() {
+type ItemTaxonomyScope = {
+  contractId: string | null;
+};
+
+async function resolveItemTaxonomyScope(contractId?: string | null): Promise<ItemTaxonomyScope> {
+  return {
+    contractId: contractId ?? null,
+  };
+}
+
+function buildFamilyOrderBy(scope: ItemTaxonomyScope): Prisma.ItemFamilyOrderByWithRelationInput[] {
+  if (scope.contractId) {
+    return [{ wbs: "asc" }, { code: "asc" }];
+  }
+
+  return [{ wbs: "asc" }, { code: "asc" }];
+}
+
+export async function getItemTaxonomyOptions(contractId?: string | null) {
   const prisma = getPrisma();
+  const scope = await resolveItemTaxonomyScope(contractId);
 
   const [families, subfamilies, groups] = await Promise.all([
     prisma.itemFamily.findMany({
       where: {
         active: true,
+        contractId: scope.contractId,
       },
-      orderBy: [{ wbs: "asc" }, { code: "asc" }],
+      orderBy: buildFamilyOrderBy(scope),
     }),
     prisma.itemSubfamily.findMany({
       where: {
         active: true,
         family: {
           active: true,
+          contractId: scope.contractId,
         },
       },
       include: {
@@ -31,6 +53,7 @@ export async function getItemTaxonomyOptions() {
           active: true,
           family: {
             active: true,
+            contractId: scope.contractId,
           },
         },
       },
@@ -51,6 +74,7 @@ export async function getItemTaxonomyOptions() {
   ]);
 
   return {
+    scope,
     families: families.map((family: (typeof families)[number]) => ({
       id: family.id,
       name: family.name,
@@ -74,10 +98,14 @@ export async function getItemTaxonomyOptions() {
   };
 }
 
-export async function getItemTaxonomySnapshot() {
+export async function getItemTaxonomySnapshot(contractId?: string | null) {
   const prisma = getPrisma();
+  const scope = await resolveItemTaxonomyScope(contractId);
 
   return prisma.itemFamily.findMany({
+    where: {
+      contractId: scope.contractId,
+    },
     orderBy: [{ wbs: "asc" }, { code: "asc" }],
     include: {
       subfamilies: {

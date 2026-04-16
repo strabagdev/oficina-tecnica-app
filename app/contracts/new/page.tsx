@@ -5,7 +5,7 @@ import { requireAdmin } from "@/lib/auth";
 
 export const metadata: Metadata = {
   title: "Nuevo contrato | Oficina Tecnica",
-  description: "Creacion inicial de contratos y carga rapida de itemizado.",
+  description: "Creacion inicial de contratos y definicion posterior de su jerarquia propia.",
 };
 
 export const dynamic = "force-dynamic";
@@ -29,7 +29,7 @@ export default async function NewContractPage({
       user={user}
       pathname="/contracts/new"
       title="Nuevo contrato"
-      description="Crea la cabecera del contrato y carga su itemizado base para empezar a operar."
+      description="Crea la cabecera del contrato. Luego definiras su jerarquia WBS propia antes de cargar partidas."
     >
       <FlashBanner type={flashType} message={flashMessage} />
 
@@ -39,8 +39,7 @@ export default async function NewContractPage({
             Crear contrato
           </h2>
           <p className="mt-2 text-sm leading-7 text-slate-600">
-            Primero crea la cabecera contractual. El itemizado se carga despues,
-            desde el modulo de partidas del contrato.
+            Primero crea la cabecera contractual. El siguiente paso sera definir la jerarquia WBS propia del contrato y despues cargar el itemizado.
           </p>
 
           <form action="/api/contracts" method="post" className="mt-6 space-y-5">
@@ -90,15 +89,16 @@ export default async function NewContractPage({
             title="Flujo recomendado"
             lines={[
               "1. Crear contrato",
-              "2. Cargar itemizado base",
-              "3. Registrar avances mensuales",
-              "4. Emitir cierres y estados de pago",
+              "2. Definir jerarquia WBS",
+              "3. Cargar itemizado base",
+              "4. Registrar avances mensuales",
+              "5. Emitir cierres y estados de pago",
             ]}
           />
           <InfoCard
             title="Siguiente modulo"
             lines={[
-              "Despues de crear el contrato, entra al modulo de partidas para cargar el itemizado de forma separada y mantener el flujo ordenado.",
+              "Despues de crear el contrato, pasaras a su modulo de jerarquia para estructurar familia, subfamilia y grupo antes de cargar partidas.",
             ]}
           />
         </aside>

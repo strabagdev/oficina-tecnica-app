@@ -23,5 +23,7 @@ export async function POST(request: Request) {
     params.set("message", result.success);
   }
 
-  return NextResponse.redirect(new URL(`${redirectTo}?${params.toString()}`, request.url));
+  const successRedirectTo = "error" in result ? redirectTo : result.redirectTo ?? redirectTo;
+
+  return NextResponse.redirect(new URL(`${successRedirectTo}?${params.toString()}`, request.url));
 }

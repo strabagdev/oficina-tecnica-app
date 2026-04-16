@@ -44,11 +44,16 @@ export async function POST(request: Request) {
   const formData = await request.formData();
   const action = String(formData.get("action") ?? "");
   const redirectTo = String(formData.get("redirectTo") ?? "/admin/item-taxonomy");
+  const contractId = String(formData.get("contractId") ?? "").trim() || null;
 
   if (action === "create-family") {
     const name = String(formData.get("name") ?? "").trim();
     const wbs = String(formData.get("wbs") ?? "").trim();
     const code = buildInternalTaxonomyCode(wbs, name);
+
+    if (!contractId) {
+      return redirectWithMessage(request, redirectTo, "error", "La+nueva+jerarquia+debe+crearse+dentro+de+un+contrato.");
+    }
 
     if (!name) {
       return redirectWithMessage(request, redirectTo, "error", "Completa+el+nombre+de+la+familia.");
@@ -57,6 +62,7 @@ export async function POST(request: Request) {
     try {
       await prisma.itemFamily.create({
         data: {
+          contractId,
           code,
           name,
           wbs: wbs || null,
@@ -75,6 +81,10 @@ export async function POST(request: Request) {
     const name = String(formData.get("name") ?? "").trim();
     const wbs = String(formData.get("wbs") ?? "").trim();
     const code = buildInternalTaxonomyCode(wbs, name);
+
+    if (!contractId) {
+      return redirectWithMessage(request, redirectTo, "error", "La+nueva+jerarquia+debe+crearse+dentro+de+un+contrato.");
+    }
 
     if (!familyId || !name) {
       return redirectWithMessage(request, redirectTo, "error", "Completa+familia+y+nombre+de+la+subfamilia.");
@@ -102,6 +112,10 @@ export async function POST(request: Request) {
     const name = String(formData.get("name") ?? "").trim();
     const wbs = String(formData.get("wbs") ?? "").trim();
     const code = buildInternalTaxonomyCode(wbs, name);
+
+    if (!contractId) {
+      return redirectWithMessage(request, redirectTo, "error", "La+nueva+jerarquia+debe+crearse+dentro+de+un+contrato.");
+    }
 
     if (!subfamilyId || !name) {
       return redirectWithMessage(request, redirectTo, "error", "Completa+subfamilia+y+nombre+del+grupo.");

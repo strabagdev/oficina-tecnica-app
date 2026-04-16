@@ -40,7 +40,7 @@ export default async function DashboardPage({
       user={user}
       pathname="/dashboard"
       title={`Bienvenido, ${user.name}`}
-      description={`Perfil activo: ${roleLabels[user.role]}. Este panel resume el estado general y te deriva a modulos separados para contratos, cierres, NOC y usuarios.`}
+      description={`Perfil activo: ${roleLabels[user.role]}. Este panel resume el estado general y te deriva a contratos, cierres, NOC y usuarios segun corresponda.`}
       actions={
         <Link
           href="/contracts"
@@ -66,12 +66,12 @@ export default async function DashboardPage({
             <ModuleCard
               href="/contracts/new"
               title="1. Crear contrato"
-              text="Parte creando el contrato y cargando el itemizado base."
+              text="Parte creando el contrato y luego define su jerarquia dentro del mismo contrato."
             />
             <ModuleCard
               href="/contracts"
               title="2. Gestionar contratos"
-              text="Revisa detalle, partidas, cierres y cambios por contrato."
+              text="Revisa detalle, jerarquia, partidas, cierres y cambios por contrato."
             />
             <ModuleCard
               href="/contracts"

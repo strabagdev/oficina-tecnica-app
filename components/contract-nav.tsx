@@ -1,29 +1,36 @@
 import Link from "next/link";
+import { UserRole } from "@prisma/client";
 
 const items = [
-  { key: "overview", label: "Resumen" },
-  { key: "items", label: "Partidas" },
-  { key: "closures", label: "Cierres" },
-  { key: "changes", label: "NOC" },
+  { key: "overview", label: "Resumen", adminOnly: false },
+  { key: "items", label: "Partidas", adminOnly: false },
+  { key: "taxonomy", label: "Jerarquia", adminOnly: true },
+  { key: "closures", label: "Cierres", adminOnly: false },
+  { key: "changes", label: "NOC", adminOnly: false },
 ] as const;
 
 export function ContractNav({
   contractId,
   active,
+  userRole,
 }: {
   contractId: string;
   active: (typeof items)[number]["key"];
+  userRole?: UserRole;
 }) {
   const hrefByKey = {
     overview: `/contracts/${contractId}`,
     items: `/contracts/${contractId}/items`,
+    taxonomy: `/contracts/${contractId}/taxonomy`,
     closures: `/contracts/${contractId}/closures`,
     changes: `/contracts/${contractId}/changes`,
   } as const;
 
   return (
     <nav className="flex flex-wrap gap-3">
-      {items.map((item) => {
+      {items
+        .filter((item) => !item.adminOnly || userRole === UserRole.ADMIN)
+        .map((item) => {
         const isActive = item.key === active;
 
         return (

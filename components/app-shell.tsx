@@ -8,8 +8,6 @@ const navigation = [
   { href: "/contracts", label: "Contratos" },
   { href: "/contracts/new", label: "Nuevo contrato" },
   { href: "/admin/users", label: "Usuarios", adminOnly: true },
-  { href: "/admin/units", label: "Unidades", adminOnly: true },
-  { href: "/admin/item-taxonomy", label: "Jerarquia", adminOnly: true },
 ];
 
 const roleLabels = {

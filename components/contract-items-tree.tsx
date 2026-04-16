@@ -270,7 +270,7 @@ function GroupSection({
             indentLevel === "nested-group" ? "pl-14" : "pl-10"
           }`}
         >
-          {group.wbs || "Sin WBS"} · {group.name}
+          {group.wbs || "Sin WBS"}{group.name ? ` · ${group.name}` : ""}
         </td>
       </tr>
       {group.items.map((item) => (
@@ -313,7 +313,7 @@ function HierarchyToggleRow({
           className="flex w-full items-center justify-between gap-4 text-left"
         >
           <span className="text-xs font-semibold uppercase tracking-[0.16em]">
-            {collapsed ? "▸" : "▾"} {wbs || "Sin WBS"} · {name}
+            {collapsed ? "▸" : "▾"} {wbs || "Sin WBS"}{name ? ` · ${name}` : ""}
           </span>
           <span className="rounded-full bg-white/80 px-3 py-1 text-[11px] font-medium tracking-normal text-slate-600">
             {itemCount} items

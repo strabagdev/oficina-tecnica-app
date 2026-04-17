@@ -1,7 +1,7 @@
 import "server-only";
 
 import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 
 const globalForPrisma = globalThis as unknown as {
   prisma?: PrismaClient;
@@ -50,4 +50,13 @@ export function getPrisma() {
   }
 
   return prisma;
+}
+
+export function prismaSupportsAuthUserId() {
+  try {
+    const userModel = Prisma.dmmf.datamodel.models.find((model) => model.name === "User");
+    return Boolean(userModel?.fields.some((field) => field.name === "authUserId"));
+  } catch {
+    return false;
+  }
 }

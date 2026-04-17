@@ -1,8 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { UserRole } from "@prisma/client";
 import { getCurrentUser } from "@/lib/auth";
 import { hashPassword } from "@/lib/password";
-import { getPrisma } from "@/lib/prisma";
+import { getPrisma, prismaSupportsAuthUserId } from "@/lib/prisma";
+import { createSupabaseServiceClient } from "@/lib/supabase/service";
 
 function redirectWithMessage(request: Request, type: "success" | "error", message: string) {
   const redirectTarget = new URL(request.url).searchParams.get("redirectTo") ?? "/admin/users";
@@ -22,6 +24,8 @@ export async function POST(request: Request) {
   }
 
   const prisma = getPrisma();
+  const supportsAuthUserId = prismaSupportsAuthUserId();
+  const supabase = createSupabaseServiceClient();
   const formData = await request.formData();
   const action = String(formData.get("action") ?? "create");
   const redirectTo = String(formData.get("redirectTo") ?? "/admin/users");
@@ -39,18 +43,47 @@ export async function POST(request: Request) {
       return redirectWithMessage(rerouteRequest, "error", "Completa+nombre%2C+correo+y+contrasena+del+usuario.");
     }
 
+    let createdAuthUserId: string | null = null;
+
     try {
+      const { data: createdAuthUser, error: authError } = await supabase.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: {
+          name,
+        },
+      });
+
+      if (authError || !createdAuthUser.user) {
+        return redirectWithMessage(
+          rerouteRequest,
+          "error",
+          "No+se+pudo+crear+el+usuario+en+Supabase.+Revisa+si+el+correo+ya+existe.",
+        );
+      }
+
+      createdAuthUserId = createdAuthUser.user.id;
+
       await prisma.user.create({
         data: {
           name,
           email,
-          passwordHash: hashPassword(password),
+          passwordHash: hashPassword(randomUUID()),
           role: role === UserRole.ADMIN ? UserRole.ADMIN : UserRole.VIEWER,
           active: true,
+          ...(supportsAuthUserId && createdAuthUserId ? { authUserId: createdAuthUserId } : {}),
         },
       });
     } catch {
-      return redirectWithMessage(rerouteRequest, "error", "No+se+pudo+crear+el+usuario.+Revisa+si+el+correo+ya+existe.");
+      if (createdAuthUserId) {
+        await supabase.auth.admin.deleteUser(createdAuthUserId).catch(() => undefined);
+      }
+      return redirectWithMessage(
+        rerouteRequest,
+        "error",
+        "No+se+pudo+crear+el+usuario+interno.+Revisa+si+el+correo+ya+existe.",
+      );
     }
 
     return redirectWithMessage(rerouteRequest, "success", "Usuario+creado+correctamente.");
@@ -74,18 +107,10 @@ export async function POST(request: Request) {
       },
     });
 
-    if (!active) {
-      await prisma.session.deleteMany({
-        where: {
-          userId,
-        },
-      });
-    }
-
     return redirectWithMessage(
       rerouteRequest,
       "success",
-      active ? "Usuario+activado." : "Usuario+desactivado+y+sesiones+cerradas.",
+      active ? "Usuario+activado." : "Usuario+desactivado.",
     );
   }
 
@@ -111,25 +136,69 @@ export async function POST(request: Request) {
       return redirectWithMessage(rerouteRequest, "error", "Ingresa+una+nueva+contrasena.");
     }
 
+    const targetUser = await prisma.user.findUnique({
+      where: {
+        id: userId,
+      },
+    });
+
+    if (!targetUser) {
+      return redirectWithMessage(rerouteRequest, "error", "Usuario+no+encontrado.");
+    }
+
+    if (supportsAuthUserId && targetUser.authUserId) {
+      const { error } = await supabase.auth.admin.updateUserById(targetUser.authUserId, {
+        password,
+      });
+
+      if (error) {
+        return redirectWithMessage(
+          rerouteRequest,
+          "error",
+          "No+se+pudo+actualizar+la+clave+en+Supabase.",
+        );
+      }
+    } else {
+      const { data: createdAuthUser, error } = await supabase.auth.admin.createUser({
+        email: targetUser.email,
+        password,
+        email_confirm: true,
+        user_metadata: {
+          name: targetUser.name,
+        },
+      });
+
+      if (error || !createdAuthUser.user) {
+        return redirectWithMessage(
+          rerouteRequest,
+          "error",
+          "No+se+pudo+crear+la+cuenta+en+Supabase+para+este+usuario.",
+        );
+      }
+
+      await prisma.user.update({
+        where: {
+          id: userId,
+        },
+        data: {
+          ...(supportsAuthUserId ? { authUserId: createdAuthUser.user.id } : {}),
+        },
+      });
+    }
+
     await prisma.user.update({
       where: {
         id: userId,
       },
       data: {
-        passwordHash: hashPassword(password),
-      },
-    });
-
-    await prisma.session.deleteMany({
-      where: {
-        userId,
+        passwordHash: hashPassword(randomUUID()),
       },
     });
 
     return redirectWithMessage(
       rerouteRequest,
       "success",
-      "Contrasena+actualizada+y+sesiones+cerradas.",
+      "Contrasena+actualizada+en+Supabase.",
     );
   }
 

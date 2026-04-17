@@ -30,7 +30,7 @@ export default async function AdminUsersPage({
       user={user}
       pathname="/admin/users"
       title="Usuarios y permisos"
-      description="Crea nuevas cuentas, cambia roles, resetea claves y activa o desactiva accesos."
+      description="Crea nuevas cuentas en Supabase Auth, cambia roles internos y activa o desactiva accesos."
     >
       <FlashBanner type={flashType} message={flashMessage} />
 
@@ -42,7 +42,7 @@ export default async function AdminUsersPage({
               Crear usuario
             </h2>
             <p className="mt-2 text-sm leading-7 text-slate-600">
-              Crea nuevas cuentas internas y define si tendran perfil de administrador o solo visualizacion.
+              Crea nuevas cuentas en Supabase Auth y define si tendran perfil de administrador o solo visualizacion dentro de la app.
             </p>
           </div>
 
@@ -103,7 +103,7 @@ export default async function AdminUsersPage({
                       {account.active ? "Activo" : "Inactivo"}
                     </span>
                     <span className="rounded-full bg-white px-3 py-1 text-slate-600">
-                      Sesiones {account.sessionCount}
+                      {account.authUserId ? "Supabase vinculado" : "Pendiente de vincular"}
                     </span>
                   </div>
                 </div>
@@ -146,7 +146,7 @@ export default async function AdminUsersPage({
                     </label>
                     <p className="mt-3 text-sm leading-7 text-slate-600">
                       {account.active
-                        ? "Desactivar cuenta y cerrar todas sus sesiones."
+                        ? "Desactivar cuenta para bloquear su acceso a la app, aunque exista en Supabase Auth."
                         : "Reactivar cuenta para permitir ingreso nuevamente."}
                     </p>
                     <button
@@ -174,7 +174,7 @@ export default async function AdminUsersPage({
                       type="submit"
                       className="mt-3 w-full rounded-full border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-900 hover:text-slate-950"
                     >
-                      Resetear clave
+                      Actualizar clave en Supabase
                     </button>
                   </form>
                 </div>

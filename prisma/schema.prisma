@@ -38,6 +38,7 @@ enum DiscountMode {
 
 model User {
   id           String    @id @default(cuid())
+  authUserId   String?   @unique
   name         String
   email        String    @unique
   passwordHash String

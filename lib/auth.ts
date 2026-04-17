@@ -1,18 +1,15 @@
 import "server-only";
 
 import { randomBytes } from "node:crypto";
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { UserRole } from "@prisma/client";
-import { getPrisma } from "@/lib/prisma";
-import { hashPassword, verifyPassword } from "@/lib/password";
-
-const SESSION_COOKIE = "ot_session";
-const SESSION_DURATION_MS = 1000 * 60 * 60 * 24 * 7;
+import { getPrisma, prismaSupportsAuthUserId } from "@/lib/prisma";
+import { hashPassword } from "@/lib/password";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 type AuthSeedUser = {
   email: string;
-  password: string;
   name: string;
   role: UserRole;
 };
@@ -26,21 +23,34 @@ export type AuthUser = {
 
 function getSeedUsers(): AuthSeedUser[] {
   const adminEmail = process.env.ADMIN_EMAIL?.trim();
-  const adminPassword = process.env.ADMIN_PASSWORD?.trim();
   const adminName = process.env.ADMIN_NAME?.trim() || "Administrador";
 
-  if (!adminEmail || !adminPassword) {
+  if (!adminEmail) {
     return [];
   }
 
   return [
     {
       email: adminEmail,
-      password: adminPassword,
       name: adminName,
       role: UserRole.ADMIN,
     },
   ];
+}
+
+function buildPlaceholderPasswordHash() {
+  return hashPassword(randomBytes(32).toString("hex"));
+}
+
+function getAuthDisplayName(user: Pick<SupabaseUser, "email" | "user_metadata">) {
+  const metadataName =
+    typeof user.user_metadata?.name === "string" ? user.user_metadata.name.trim() : "";
+
+  if (metadataName) {
+    return metadataName;
+  }
+
+  return user.email?.split("@")[0] || "Usuario";
 }
 
 export async function ensureBaseUsers() {
@@ -62,7 +72,7 @@ export async function ensureBaseUsers() {
       email: user.email.toLowerCase(),
       name: user.name,
       role: user.role,
-      passwordHash: hashPassword(user.password),
+      passwordHash: buildPlaceholderPasswordHash(),
     })),
   });
 }
@@ -70,75 +80,66 @@ export async function ensureBaseUsers() {
 export async function getLoginSetup() {
   const prisma = getPrisma();
   const userCount = await prisma.user.count();
-  const hasBootstrapAdmin =
-    Boolean(process.env.ADMIN_EMAIL?.trim()) &&
-    Boolean(process.env.ADMIN_PASSWORD?.trim());
+  const hasBootstrapAdmin = Boolean(process.env.ADMIN_EMAIL?.trim());
 
   return {
     userCount,
-    hasBootstrapAdmin,
+    hasBootstrapAdmin: hasBootstrapAdmin || userCount > 0,
     bootstrapPending: userCount === 0,
   };
 }
 
-async function createSession(userId: string) {
-  const prisma = getPrisma();
-  const token = randomBytes(32).toString("hex");
-  const expiresAt = new Date(Date.now() + SESSION_DURATION_MS);
-
-  await prisma.session.create({
-    data: {
-      token,
-      userId,
-      expiresAt,
-    },
-  });
-
-  const cookieStore = await cookies();
-  cookieStore.set(SESSION_COOKIE, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    expires: expiresAt,
-  });
-}
-
-export async function deleteSession() {
-  const prisma = getPrisma();
-  const cookieStore = await cookies();
-  const token = cookieStore.get(SESSION_COOKIE)?.value;
-
-  if (token) {
-    await prisma.session.deleteMany({
-      where: {
-        token,
-      },
-    });
-  }
-
-  cookieStore.delete(SESSION_COOKIE);
-}
-
-export async function loginWithPassword(email: string, password: string) {
+async function syncInternalUser(authUser: SupabaseUser) {
   await ensureBaseUsers();
   const prisma = getPrisma();
+  const supportsAuthUserId = prismaSupportsAuthUserId();
+  const email = authUser.email?.trim().toLowerCase();
 
-  const user = await prisma.user.findUnique({
+  if (!email) {
+    return null;
+  }
+
+  const existingUser = await prisma.user.findFirst({
     where: {
-      email: email.toLowerCase(),
+      OR: supportsAuthUserId
+        ? [
+            { authUserId: authUser.id },
+            { email },
+          ]
+        : [{ email }],
     },
   });
 
-  if (!user || !verifyPassword(password, user.passwordHash)) {
-    return null;
-  }
+  const displayName = getAuthDisplayName(authUser);
+  const bootstrapAdminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+
+  const user = existingUser
+    ? await prisma.user.update({
+        where: {
+          id: existingUser.id,
+        },
+        data: {
+          email,
+          name: existingUser.name || displayName,
+          ...(supportsAuthUserId
+            ? { authUserId: existingUser.authUserId ?? authUser.id }
+            : {}),
+        },
+      })
+    : await prisma.user.create({
+        data: {
+          email,
+          name: displayName,
+          passwordHash: buildPlaceholderPasswordHash(),
+          role: bootstrapAdminEmail === email ? UserRole.ADMIN : UserRole.VIEWER,
+          active: true,
+          ...(supportsAuthUserId ? { authUserId: authUser.id } : {}),
+        },
+      });
 
   if (!user.active) {
     return null;
   }
-
-  await createSession(user.id);
 
   return {
     id: user.id,
@@ -148,56 +149,45 @@ export async function loginWithPassword(email: string, password: string) {
   } satisfies AuthUser;
 }
 
-export async function getCurrentUser() {
-  const cookieStore = await cookies();
-  const token = cookieStore.get(SESSION_COOKIE)?.value;
+export async function deleteSession() {
+  const supabase = await createSupabaseServerClient();
+  await supabase.auth.signOut();
+}
 
-  if (!token) {
-    return null;
-  }
-
-  const prisma = getPrisma();
-
-  const session = await prisma.session.findUnique({
-    where: {
-      token,
-    },
-    include: {
-      user: true,
-    },
+export async function loginWithPassword(email: string, password: string) {
+  const supabase = await createSupabaseServerClient();
+  const normalizedEmail = email.toLowerCase();
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: normalizedEmail,
+    password,
   });
 
-  if (!session) {
-    cookieStore.delete(SESSION_COOKIE);
+  if (error || !data.user) {
     return null;
   }
 
-  if (session.expiresAt < new Date()) {
-    await prisma.session.delete({
-      where: {
-        id: session.id,
-      },
-    });
-    cookieStore.delete(SESSION_COOKIE);
+  const user = await syncInternalUser(data.user);
+
+  if (!user) {
+    await supabase.auth.signOut();
     return null;
   }
 
-  if (!session.user.active) {
-    await prisma.session.delete({
-      where: {
-        id: session.id,
-      },
-    });
-    cookieStore.delete(SESSION_COOKIE);
+  return user;
+}
+
+export async function getCurrentUser() {
+  const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser();
+
+  if (error || !user) {
     return null;
   }
 
-  return {
-    id: session.user.id,
-    name: session.user.name,
-    email: session.user.email,
-    role: session.user.role,
-  } satisfies AuthUser;
+  return syncInternalUser(user);
 }
 
 export async function requireUser() {

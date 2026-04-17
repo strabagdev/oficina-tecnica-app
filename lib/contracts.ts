@@ -43,6 +43,50 @@ function formatDateForInput(value: Date | null | undefined) {
   return value.toISOString().slice(0, 10);
 }
 
+function tokenizeItemNumber(value: string | null | undefined) {
+  return (value ?? "")
+    .split(/[^\dA-Za-z]+/)
+    .filter(Boolean)
+    .map((part) => (/^\d+$/.test(part) ? Number(part) : part.toLowerCase()));
+}
+
+function compareItemNumbers(left: string | null | undefined, right: string | null | undefined) {
+  const leftTokens = tokenizeItemNumber(left);
+  const rightTokens = tokenizeItemNumber(right);
+  const length = Math.max(leftTokens.length, rightTokens.length);
+
+  for (let index = 0; index < length; index += 1) {
+    const leftToken = leftTokens[index];
+    const rightToken = rightTokens[index];
+
+    if (leftToken === undefined) {
+      return -1;
+    }
+
+    if (rightToken === undefined) {
+      return 1;
+    }
+
+    if (leftToken === rightToken) {
+      continue;
+    }
+
+    if (typeof leftToken === "number" && typeof rightToken === "number") {
+      return leftToken - rightToken;
+    }
+
+    return String(leftToken).localeCompare(String(rightToken), "es", {
+      numeric: true,
+      sensitivity: "base",
+    });
+  }
+
+  return (left ?? "").localeCompare(right ?? "", "es", {
+    numeric: true,
+    sensitivity: "base",
+  });
+}
+
 function formatDiscount(
   mode: DiscountMode,
   percent: Prisma.Decimal | null,
@@ -170,6 +214,16 @@ export async function getContractDetailSnapshot(contractId: string) {
     return null;
   }
 
+  const sortedItems = [...contract.items].sort((left, right) => {
+    const itemNumberOrder = compareItemNumbers(left.itemNumber, right.itemNumber);
+
+    if (itemNumberOrder !== 0) {
+      return itemNumberOrder;
+    }
+
+    return compareItemNumbers(left.itemCode, right.itemCode);
+  });
+
   const consumedQuantityByItem = new Map<string, Prisma.Decimal>();
   const consumedAmountByItem = new Map<string, Prisma.Decimal>();
 
@@ -215,9 +269,9 @@ export async function getContractDetailSnapshot(contractId: string) {
     startDateValue: formatDateForInput(contract.startDate),
     endDateValue: formatDateForInput(contract.endDate),
     originalAmount: formatCurrency(contract.originalAmount),
-    itemCount: contract.items.length,
+    itemCount: sortedItems.length,
     closureCount: contract.monthlyClosures.length,
-    items: contract.items.map((item: ContractDetailRecord["items"][number]) => ({
+    items: sortedItems.map((item: ContractDetailRecord["items"][number]) => ({
       id: item.id,
       family: item.family,
       subfamily: item.subfamily,
@@ -271,22 +325,15 @@ export async function getUserAdminSnapshot() {
         name: "asc",
       },
     ],
-    include: {
-      _count: {
-        select: {
-          sessions: true,
-        },
-      },
-    },
   });
 
   return users.map((user) => ({
     id: user.id,
+    authUserId: user.authUserId,
     name: user.name,
     email: user.email,
     role: user.role,
     active: user.active,
-    sessionCount: user._count.sessions,
   }));
 }
 

@@ -66,8 +66,8 @@ export default async function LoginPage() {
             <div className="mb-8 space-y-2">
               <h2 className="text-2xl font-semibold text-slate-950">Ingresar</h2>
               <p className="text-sm leading-6 text-slate-600">
-                Acceso por usuarios creados en la base de datos con perfiles de
-                administrador y visualizador.
+                Acceso con usuarios existentes en Supabase Auth. Los roles y el
+                nivel de acceso dentro del sistema se administran internamente.
               </p>
             </div>
 
@@ -81,13 +81,14 @@ export default async function LoginPage() {
               </p>
               {setup.bootstrapPending ? (
                 <p>
-                  Define `ADMIN_EMAIL` y `ADMIN_PASSWORD` para que el sistema cree
-                  automaticamente el primer administrador al iniciar.
+                  Si el primer ingreso corresponde al correo definido en
+                  `ADMIN_EMAIL`, ese usuario de Supabase se vinculara como
+                  administrador interno.
                 </p>
               ) : (
                 <p>
-                  Las nuevas cuentas y cambios de acceso deben administrarse desde
-                  el panel interno.
+                  Las nuevas cuentas se autentican por Supabase y los roles o
+                  bloqueos de acceso se administran desde el panel interno.
                 </p>
               )}
             </div>

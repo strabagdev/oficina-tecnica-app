@@ -47,35 +47,50 @@ export function ContractItemsTree({
   families: FamilyRow[];
   editMode?: boolean;
 }) {
-  const [collapsedFamilies, setCollapsedFamilies] = useState<Record<string, boolean>>({});
-  const [collapsedSubfamilies, setCollapsedSubfamilies] = useState<Record<string, boolean>>({});
   const storageKey = `contract-items-tree:${contractId}`;
+
+  return (
+    <ContractItemsTreeContent
+      key={storageKey}
+      storageKey={storageKey}
+      families={families}
+      editMode={editMode}
+    />
+  );
+}
+
+function ContractItemsTreeContent({
+  storageKey,
+  families,
+  editMode,
+}: {
+  storageKey: string;
+  families: FamilyRow[];
+  editMode: boolean;
+}) {
+  const [collapsedFamilies, setCollapsedFamilies] = useState<Record<string, boolean>>(
+    () => readTreeState(storageKey).collapsedFamilies,
+  );
+  const [collapsedSubfamilies, setCollapsedSubfamilies] = useState<Record<string, boolean>>(
+    () => readTreeState(storageKey).collapsedSubfamilies,
+  );
 
   const familyCount = families.length;
   const subfamilyCount = useMemo(
     () => families.reduce((total, family) => total + family.subfamilies.length, 0),
     [families],
   );
-
-  useEffect(() => {
-    try {
-      const rawState = window.localStorage.getItem(storageKey);
-
-      if (!rawState) {
-        return;
-      }
-
-      const parsedState = JSON.parse(rawState) as {
-        collapsedFamilies?: Record<string, boolean>;
-        collapsedSubfamilies?: Record<string, boolean>;
-      };
-
-      setCollapsedFamilies(parsedState.collapsedFamilies ?? {});
-      setCollapsedSubfamilies(parsedState.collapsedSubfamilies ?? {});
-    } catch {
-      window.localStorage.removeItem(storageKey);
-    }
-  }, [storageKey]);
+  const familyKeys = useMemo(() => families.map((family) => family.key), [families]);
+  const subfamilyKeys = useMemo(
+    () => families.flatMap((family) => family.subfamilies.map((subfamily) => subfamily.key)),
+    [families],
+  );
+  const allCollapsed = useMemo(
+    () =>
+      familyKeys.every((familyKey) => collapsedFamilies[familyKey] ?? false) &&
+      subfamilyKeys.every((subfamilyKey) => collapsedSubfamilies[subfamilyKey] ?? false),
+    [collapsedFamilies, collapsedSubfamilies, familyKeys, subfamilyKeys],
+  );
 
   useEffect(() => {
     try {
@@ -95,9 +110,26 @@ export function ContractItemsTree({
     <div className="mt-6 overflow-hidden rounded-3xl border border-slate-200">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-medium uppercase tracking-[0.16em] text-slate-500">
         <span>Vista jerarquica del itemizado</span>
-        <span>
-          {familyCount} familias · {subfamilyCount} subfamilias
-        </span>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <span>
+            {familyCount} familias · {subfamilyCount} subfamilias
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setCollapsedFamilies(
+                Object.fromEntries(familyKeys.map((familyKey) => [familyKey, true])),
+              );
+              setCollapsedSubfamilies(
+                Object.fromEntries(subfamilyKeys.map((subfamilyKey) => [subfamilyKey, true])),
+              );
+            }}
+            disabled={allCollapsed}
+            className="rounded-full border border-slate-300 px-3 py-1 text-[11px] font-semibold tracking-[0.12em] text-slate-700 transition hover:border-slate-900 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400"
+          >
+            Contraer todo
+          </button>
+        </div>
       </div>
       <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
         <thead className="bg-slate-50 text-slate-500">
@@ -141,6 +173,43 @@ export function ContractItemsTree({
       </table>
     </div>
   );
+}
+
+function readTreeState(storageKey: string) {
+  if (typeof window === "undefined") {
+    return {
+      collapsedFamilies: {},
+      collapsedSubfamilies: {},
+    };
+  }
+
+  try {
+    const rawState = window.localStorage.getItem(storageKey);
+
+    if (!rawState) {
+      return {
+        collapsedFamilies: {},
+        collapsedSubfamilies: {},
+      };
+    }
+
+    const parsedState = JSON.parse(rawState) as {
+      collapsedFamilies?: Record<string, boolean>;
+      collapsedSubfamilies?: Record<string, boolean>;
+    };
+
+    return {
+      collapsedFamilies: parsedState.collapsedFamilies ?? {},
+      collapsedSubfamilies: parsedState.collapsedSubfamilies ?? {},
+    };
+  } catch {
+    window.localStorage.removeItem(storageKey);
+
+    return {
+      collapsedFamilies: {},
+      collapsedSubfamilies: {},
+    };
+  }
 }
 
 function FamilySection({

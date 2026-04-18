@@ -1,7 +1,8 @@
 "use client";
 
-import type { ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import type { FormEvent, ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ItemTaxonomyFields } from "@/components/item-taxonomy-fields";
 import { Modal } from "@/components/modal";
 
@@ -80,6 +81,40 @@ type ModalState =
   | { type: "edit"; itemId: string }
   | null;
 
+type ImportValidationState =
+  | { status: "idle"; message: string }
+  | { status: "validating"; message: string }
+  | { status: "error"; message: string }
+  | { status: "success"; message: string; validatedSignature: string };
+
+type ImportSubmissionState =
+  | { status: "idle"; message: string }
+  | { status: "submitting"; message: string }
+  | { status: "error"; message: string };
+
+function resolveInitialModalState(
+  initialModal: string,
+  editItemId: string,
+): ModalState {
+  if (initialModal === "create") {
+    return { type: "create" };
+  }
+
+  if (initialModal === "import") {
+    return { type: "import" };
+  }
+
+  if (initialModal === "unit") {
+    return { type: "unit" };
+  }
+
+  if (initialModal === "edit" && editItemId) {
+    return { type: "edit", itemId: editItemId };
+  }
+
+  return null;
+}
+
 export function ContractItemsAdminClient({
   contractId,
   contractCode,
@@ -93,6 +128,7 @@ export function ContractItemsAdminClient({
   editItemId,
   unitDraft,
   unitEditDraft,
+  importMode,
   showTable = true,
   editMode = false,
   taxonomyReady = true,
@@ -113,38 +149,34 @@ export function ContractItemsAdminClient({
   editItemId: string;
   unitDraft: UnitDraftState;
   unitEditDraft: UnitEditDraftState;
+  importMode: "create" | "update";
   showTable?: boolean;
   editMode?: boolean;
   taxonomyReady?: boolean;
 }) {
-  const [activeModal, setActiveModal] = useState<ModalState>(null);
-  const [showCreateUnitForm, setShowCreateUnitForm] = useState(false);
+  const importFormRef = useRef<HTMLFormElement | null>(null);
+  const importFileInputRef = useRef<HTMLInputElement | null>(null);
+  const importSubmissionLockRef = useRef(false);
+  const [activeModal, setActiveModal] = useState<ModalState>(() =>
+    resolveInitialModalState(initialModal, editItemId),
+  );
+  const [showCreateUnitForm, setShowCreateUnitForm] = useState(
+    () => initialModal === "unit" && Boolean(unitDraft.code || unitDraft.name || unitDraft.sortOrder),
+  );
   const [createUnitError, setCreateUnitError] = useState("");
   const [editUnitErrors, setEditUnitErrors] = useState<Record<string, string>>({});
-
-  useEffect(() => {
-    if (initialModal === "create") {
-      setActiveModal({ type: "create" });
-      return;
-    }
-
-    if (initialModal === "import") {
-      setActiveModal({ type: "import" });
-      return;
-    }
-
-    if (initialModal === "unit") {
-      setActiveModal({ type: "unit" });
-      if (unitDraft.code || unitDraft.name || unitDraft.sortOrder) {
-        setShowCreateUnitForm(true);
-      }
-      return;
-    }
-
-    if (initialModal === "edit" && editItemId) {
-      setActiveModal({ type: "edit", itemId: editItemId });
-    }
-  }, [editItemId, initialModal, unitDraft.code, unitDraft.name, unitDraft.sortOrder]);
+  const [currentImportMode, setCurrentImportMode] = useState<"create" | "update">(importMode);
+  const [currentImportSignature, setCurrentImportSignature] = useState("");
+  const [importValidationProgress, setImportValidationProgress] = useState(0);
+  const [importSubmissionProgress, setImportSubmissionProgress] = useState(0);
+  const [importValidation, setImportValidation] = useState<ImportValidationState>({
+    status: "idle",
+    message: "Valida el archivo antes de habilitar la importacion.",
+  });
+  const [importSubmission, setImportSubmission] = useState<ImportSubmissionState>({
+    status: "idle",
+    message: "Cuando el archivo este validado, podras importarlo.",
+  });
 
   const resolvedEditItem =
     activeModal?.type === "edit"
@@ -164,6 +196,260 @@ export function ContractItemsAdminClient({
     () => measurementUnits.filter((unit) => unit.active),
     [measurementUnits],
   );
+
+  useEffect(() => {
+    if (importValidation.status === "validating") {
+      const intervalId = window.setInterval(() => {
+        setImportValidationProgress((current) => {
+          if (current >= 99) {
+            return current;
+          }
+
+          if (current < 40) {
+            return Math.min(current + 8, 99);
+          }
+
+          if (current < 70) {
+            return Math.min(current + 4, 99);
+          }
+
+          if (current < 85) {
+            return Math.min(current + 2, 99);
+          }
+
+          return Math.min(current + 1, 99);
+        });
+      }, 220);
+
+      return () => {
+        window.clearInterval(intervalId);
+      };
+    }
+  }, [importValidation.status]);
+
+  useEffect(() => {
+    if (importSubmission.status === "submitting") {
+      const intervalId = window.setInterval(() => {
+        setImportSubmissionProgress((current) => {
+          if (current >= 99) {
+            return current;
+          }
+
+          if (current < 35) {
+            return Math.min(current + 7, 99);
+          }
+
+          if (current < 65) {
+            return Math.min(current + 4, 99);
+          }
+
+          if (current < 85) {
+            return Math.min(current + 2, 99);
+          }
+
+          return Math.min(current + 1, 99);
+        });
+      }, 260);
+
+      return () => {
+        window.clearInterval(intervalId);
+      };
+    }
+  }, [importSubmission.status]);
+
+  function buildImportSignature() {
+    const file = importFileInputRef.current?.files?.[0];
+
+    if (!file) {
+      return "";
+    }
+
+    return [currentImportMode, file.name, file.size, file.lastModified].join("::");
+  }
+
+  function resetImportValidation(message = "Valida el archivo antes de habilitar la importacion.") {
+    importSubmissionLockRef.current = false;
+    setImportValidationProgress(0);
+    setImportValidation({
+      status: "idle",
+      message,
+    });
+    setImportSubmissionProgress(0);
+    setImportSubmission({
+      status: "idle",
+      message: "Cuando el archivo este validado, podras importarlo.",
+    });
+  }
+
+  async function handleValidateImport() {
+    const form = importFormRef.current;
+
+    if (!form) {
+      return;
+    }
+
+    const signature = buildImportSignature();
+
+    if (!signature) {
+      setImportValidationProgress(0);
+      setImportValidation({
+        status: "error",
+        message: "Selecciona un archivo Excel antes de validar.",
+      });
+      return;
+    }
+
+    setImportValidation({
+      status: "validating",
+      message: "Validando archivo...",
+    });
+    setImportValidationProgress(10);
+
+    try {
+      const response = await fetch("/api/contract-items/import/validate", {
+        method: "POST",
+        body: new FormData(form),
+      });
+      const responseText = await response.text();
+      let payload: { error?: string; success?: string } = {};
+
+      if (responseText) {
+        try {
+          payload = JSON.parse(responseText) as { error?: string; success?: string };
+        } catch {
+          payload = {
+            error: responseText,
+          };
+        }
+      }
+
+      if (!response.ok || !payload.success) {
+        setImportValidationProgress(0);
+        setImportValidation({
+          status: "error",
+          message:
+            payload.error ??
+            `No pude validar el archivo Excel. Respuesta ${response.status}.`,
+        });
+        return;
+      }
+
+      setImportValidation({
+        status: "success",
+        message: payload.success,
+        validatedSignature: signature,
+      });
+      setImportValidationProgress(100);
+    } catch {
+      setImportValidation({
+        status: "error",
+        message: "Ocurrio un problema de red al validar el archivo Excel.",
+      });
+      setImportValidationProgress(0);
+    }
+  }
+
+  function handleImportFormChange() {
+    setCurrentImportSignature(buildImportSignature());
+    resetImportValidation();
+  }
+
+  function handleImportModeChange(mode: "create" | "update") {
+    setCurrentImportMode(mode);
+    resetImportValidation();
+  }
+
+  async function handleImportSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (importSubmissionLockRef.current) {
+      return;
+    }
+
+    const isReady =
+      importValidation.status === "success" &&
+      importValidation.validatedSignature === currentImportSignature;
+
+    if (!isReady) {
+      setImportValidation({
+        status: "error",
+        message: "Primero valida el archivo antes de importarlo.",
+      });
+      setImportSubmissionProgress(0);
+      setImportSubmission({
+        status: "error",
+        message: "Primero valida el archivo antes de importarlo.",
+      });
+      return;
+    }
+
+    const form = importFormRef.current;
+
+    if (!form) {
+      return;
+    }
+
+    importSubmissionLockRef.current = true;
+
+    setImportSubmission({
+      status: "submitting",
+      message: "Subiendo e importando el archivo validado...",
+    });
+    setImportSubmissionProgress(8);
+
+    try {
+      const response = await fetch(form.action, {
+        method: "POST",
+        body: new FormData(form),
+        headers: {
+          "x-import-request": "1",
+        },
+      });
+      const responseText = await response.text();
+      let payload: { error?: string; message?: string; redirectTo?: string } = {};
+
+      if (responseText) {
+        try {
+          payload = JSON.parse(responseText) as {
+            error?: string;
+            message?: string;
+            redirectTo?: string;
+          };
+        } catch {
+          payload = {
+            error: responseText,
+          };
+        }
+      }
+
+      if (!response.ok || !payload.redirectTo) {
+        importSubmissionLockRef.current = false;
+        setImportSubmissionProgress(0);
+        setImportSubmission({
+          status: "error",
+          message:
+            payload.error ??
+            payload.message ??
+            `No pude importar el archivo validado. Respuesta ${response.status}.`,
+        });
+        return;
+      }
+
+      setImportSubmissionProgress(100);
+      window.location.href = payload.redirectTo;
+    } catch {
+      importSubmissionLockRef.current = false;
+      setImportSubmissionProgress(0);
+      setImportSubmission({
+        status: "error",
+        message: "Ocurrio un problema de red al importar el archivo validado.",
+      });
+    }
+  }
+
+  const isImportReady =
+    importValidation.status === "success" &&
+    importValidation.validatedSignature === currentImportSignature;
 
   return (
     <>
@@ -293,25 +579,29 @@ export function ContractItemsAdminClient({
         size="md"
       >
         <form
+          ref={importFormRef}
           action="/api/contract-items/import"
           method="post"
           encType="multipart/form-data"
           className="space-y-4"
+          onChange={handleImportFormChange}
+          onSubmit={handleImportSubmit}
         >
           <input type="hidden" name="contractId" value={contractId} />
           <input type="hidden" name="redirectTo" value={redirectTo} />
           <input type="hidden" name="returnModal" value="import" />
-          <a
+          <Link
             href="/api/contract-items/template"
             className="inline-flex rounded-full border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-900 hover:text-slate-950"
           >
             Descargar archivo de referencia
-          </a>
+          </Link>
           <div className="space-y-2">
             <label className="block text-sm font-medium text-slate-700" htmlFor="import-file">
               Archivo Excel
             </label>
             <input
+              ref={importFileInputRef}
               id="import-file"
               name="file"
               type="file"
@@ -319,16 +609,122 @@ export function ContractItemsAdminClient({
               className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900"
             />
           </div>
+          <fieldset className="space-y-3">
+            <legend className="text-sm font-medium text-slate-700">Modo de importacion</legend>
+            <div className="grid gap-3 md:grid-cols-2">
+              <label className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+                <input
+                  type="radio"
+                  name="importMode"
+                  value="create"
+                  checked={currentImportMode === "create"}
+                  onChange={() => handleImportModeChange("create")}
+                  className="mr-2"
+                />
+                Crear nuevas partidas
+                <span className="mt-1 block text-xs leading-5 text-slate-500">
+                  Rechaza el archivo si algun numero de itemizado ya existe en el contrato.
+                </span>
+              </label>
+              <label className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+                <input
+                  type="radio"
+                  name="importMode"
+                  value="update"
+                  checked={currentImportMode === "update"}
+                  onChange={() => handleImportModeChange("update")}
+                  className="mr-2"
+                />
+                Actualizar existentes
+                <span className="mt-1 block text-xs leading-5 text-slate-500">
+                  Rechaza el archivo si algun numero de itemizado no existe en el contrato.
+                </span>
+              </label>
+            </div>
+          </fieldset>
           <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600">
-            La familia es obligatoria. Subfamilia y grupo pueden quedar vacios cuando la partida
-            dependa directamente de una familia.
+            Antes de persistir, validamos todo el Excel completo. La familia es obligatoria.
+            Subfamilia y grupo pueden quedar vacios cuando la partida dependa directamente de una
+            familia.
           </div>
-          <button
-            type="submit"
-            className="rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+          {importValidation.status === "validating" || importValidation.status === "success" ? (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs font-medium text-slate-500">
+                <span>Progreso de validacion</span>
+                <span>{importValidationProgress}%</span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-slate-200">
+                <div
+                  className={`h-full rounded-full transition-[width] duration-200 ${
+                    importValidation.status === "success" ? "bg-emerald-500" : "bg-slate-900"
+                  }`}
+                  style={{ width: `${importValidationProgress}%` }}
+                />
+              </div>
+            </div>
+          ) : null}
+          {importSubmission.status === "submitting" || importSubmission.status === "error" ? (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs font-medium text-slate-500">
+                <span>Progreso de importacion</span>
+                <span>{importSubmissionProgress}%</span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-slate-200">
+                <div
+                  className={`h-full rounded-full transition-[width] duration-200 ${
+                    importSubmission.status === "error" ? "bg-rose-500" : "bg-sky-600"
+                  }`}
+                  style={{ width: `${importSubmissionProgress}%` }}
+                />
+              </div>
+            </div>
+          ) : null}
+          <div
+            className={`rounded-2xl px-4 py-3 text-sm leading-6 ${
+              importValidation.status === "error"
+                ? "bg-rose-50 text-rose-700"
+                : importValidation.status === "success"
+                  ? "bg-emerald-50 text-emerald-700"
+                  : "bg-slate-50 text-slate-600"
+            }`}
           >
-            Importar XLSX
-          </button>
+            {importValidation.message}
+          </div>
+          <div
+            className={`rounded-2xl px-4 py-3 text-sm leading-6 ${
+              importSubmission.status === "error"
+                ? "bg-rose-50 text-rose-700"
+                : importSubmission.status === "submitting"
+                  ? "bg-sky-50 text-sky-700"
+                  : "bg-slate-50 text-slate-600"
+            }`}
+          >
+            {importSubmission.message}
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={handleValidateImport}
+              disabled={
+                importValidation.status === "validating" ||
+                importSubmission.status === "submitting"
+              }
+              className="rounded-full border border-slate-300 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-900 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {importValidation.status === "validating" ? "Validando..." : "Validar archivo"}
+            </button>
+            <button
+              type="submit"
+              disabled={
+                !isImportReady ||
+                importValidation.status === "validating" ||
+                importSubmission.status === "submitting"
+              }
+              className="rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+            >
+              {importSubmission.status === "submitting" ? "Importando..." : "Importar XLSX"}
+            </button>
+          </div>
         </form>
       </Modal>
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 
 type ItemRow = {
   id: string;
@@ -38,6 +38,18 @@ type FamilyRow = {
   groups: GroupRow[];
 };
 
+type TreeState = {
+  collapsedFamilies: Record<string, boolean>;
+  collapsedSubfamilies: Record<string, boolean>;
+};
+
+const EMPTY_TREE_STATE: TreeState = {
+  collapsedFamilies: {},
+  collapsedSubfamilies: {},
+};
+
+const treeStateCache = new Map<string, { raw: string | null; state: TreeState }>();
+
 export function ContractItemsTree({
   contractId,
   families,
@@ -68,12 +80,12 @@ function ContractItemsTreeContent({
   families: FamilyRow[];
   editMode: boolean;
 }) {
-  const [collapsedFamilies, setCollapsedFamilies] = useState<Record<string, boolean>>(
-    () => readTreeState(storageKey).collapsedFamilies,
+  const treeState = useSyncExternalStore(
+    (onStoreChange) => subscribeToTreeState(storageKey, onStoreChange),
+    () => readTreeState(storageKey),
+    () => EMPTY_TREE_STATE,
   );
-  const [collapsedSubfamilies, setCollapsedSubfamilies] = useState<Record<string, boolean>>(
-    () => readTreeState(storageKey).collapsedSubfamilies,
-  );
+  const { collapsedFamilies, collapsedSubfamilies } = treeState;
 
   const familyCount = families.length;
   const subfamilyCount = useMemo(
@@ -92,20 +104,6 @@ function ContractItemsTreeContent({
     [collapsedFamilies, collapsedSubfamilies, familyKeys, subfamilyKeys],
   );
 
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        storageKey,
-        JSON.stringify({
-          collapsedFamilies,
-          collapsedSubfamilies,
-        }),
-      );
-    } catch {
-      // Ignore storage failures and keep the tree usable in-memory.
-    }
-  }, [collapsedFamilies, collapsedSubfamilies, storageKey]);
-
   return (
     <div className="mt-6 overflow-hidden rounded-3xl border border-slate-200">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-medium uppercase tracking-[0.16em] text-slate-500">
@@ -117,12 +115,14 @@ function ContractItemsTreeContent({
           <button
             type="button"
             onClick={() => {
-              setCollapsedFamilies(
-                Object.fromEntries(familyKeys.map((familyKey) => [familyKey, true])),
-              );
-              setCollapsedSubfamilies(
-                Object.fromEntries(subfamilyKeys.map((subfamilyKey) => [subfamilyKey, true])),
-              );
+              writeTreeState(storageKey, {
+                collapsedFamilies: Object.fromEntries(
+                  familyKeys.map((familyKey) => [familyKey, true]),
+                ),
+                collapsedSubfamilies: Object.fromEntries(
+                  subfamilyKeys.map((subfamilyKey) => [subfamilyKey, true]),
+                ),
+              });
             }}
             disabled={allCollapsed}
             className="rounded-full border border-slate-300 px-3 py-1 text-[11px] font-semibold tracking-[0.12em] text-slate-700 transition hover:border-slate-900 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400"
@@ -154,17 +154,23 @@ function ContractItemsTreeContent({
                 editMode={editMode}
                 collapsed={isFamilyCollapsed}
                 onToggle={() =>
-                  setCollapsedFamilies((current) => ({
-                    ...current,
-                    [family.key]: !isFamilyCollapsed,
-                  }))
+                  writeTreeState(storageKey, {
+                    collapsedFamilies: {
+                      ...collapsedFamilies,
+                      [family.key]: !isFamilyCollapsed,
+                    },
+                    collapsedSubfamilies,
+                  })
                 }
                 collapsedSubfamilies={collapsedSubfamilies}
                 onToggleSubfamily={(subfamilyKey, collapsed) =>
-                  setCollapsedSubfamilies((current) => ({
-                    ...current,
-                    [subfamilyKey]: collapsed,
-                  }))
+                  writeTreeState(storageKey, {
+                    collapsedFamilies,
+                    collapsedSubfamilies: {
+                      ...collapsedSubfamilies,
+                      [subfamilyKey]: collapsed,
+                    },
+                  })
                 }
               />
             );
@@ -175,22 +181,48 @@ function ContractItemsTreeContent({
   );
 }
 
-function readTreeState(storageKey: string) {
+function subscribeToTreeState(storageKey: string, onStoreChange: () => void) {
   if (typeof window === "undefined") {
-    return {
-      collapsedFamilies: {},
-      collapsedSubfamilies: {},
-    };
+    return () => undefined;
+  }
+
+  const handleStorage = (event: StorageEvent) => {
+    if (event.key === storageKey) {
+      onStoreChange();
+    }
+  };
+
+  const handleCustomEvent = (event: Event) => {
+    if (event instanceof CustomEvent && event.detail === storageKey) {
+      onStoreChange();
+    }
+  };
+
+  window.addEventListener("storage", handleStorage);
+  window.addEventListener("contract-items-tree-state", handleCustomEvent);
+
+  return () => {
+    window.removeEventListener("storage", handleStorage);
+    window.removeEventListener("contract-items-tree-state", handleCustomEvent);
+  };
+}
+
+function readTreeState(storageKey: string): TreeState {
+  if (typeof window === "undefined") {
+    return EMPTY_TREE_STATE;
   }
 
   try {
     const rawState = window.localStorage.getItem(storageKey);
+    const cachedEntry = treeStateCache.get(storageKey);
 
     if (!rawState) {
-      return {
-        collapsedFamilies: {},
-        collapsedSubfamilies: {},
-      };
+      treeStateCache.set(storageKey, { raw: null, state: EMPTY_TREE_STATE });
+      return EMPTY_TREE_STATE;
+    }
+
+    if (cachedEntry && cachedEntry.raw === rawState) {
+      return cachedEntry.state;
     }
 
     const parsedState = JSON.parse(rawState) as {
@@ -198,17 +230,30 @@ function readTreeState(storageKey: string) {
       collapsedSubfamilies?: Record<string, boolean>;
     };
 
-    return {
+    const nextState = {
       collapsedFamilies: parsedState.collapsedFamilies ?? {},
       collapsedSubfamilies: parsedState.collapsedSubfamilies ?? {},
     };
+
+    treeStateCache.set(storageKey, { raw: rawState, state: nextState });
+
+    return nextState;
   } catch {
     window.localStorage.removeItem(storageKey);
+    treeStateCache.set(storageKey, { raw: null, state: EMPTY_TREE_STATE });
 
-    return {
-      collapsedFamilies: {},
-      collapsedSubfamilies: {},
-    };
+    return EMPTY_TREE_STATE;
+  }
+}
+
+function writeTreeState(storageKey: string, state: TreeState) {
+  try {
+    const rawState = JSON.stringify(state);
+    treeStateCache.set(storageKey, { raw: rawState, state });
+    window.localStorage.setItem(storageKey, rawState);
+    window.dispatchEvent(new CustomEvent("contract-items-tree-state", { detail: storageKey }));
+  } catch {
+    // Ignore storage failures and keep the tree usable in-memory.
   }
 }
 

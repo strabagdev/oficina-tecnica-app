@@ -20,9 +20,9 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 
 type ItemTaxonomyData = {
-  families: { name: string; wbs?: string | null }[];
-  subfamilies: { name: string; wbs?: string | null }[];
-  groups: { name: string; wbs?: string | null }[];
+  families: { id: string; name: string; wbs?: string | null }[];
+  subfamilies: { id: string; familyId: string; name: string; wbs?: string | null }[];
+  groups: { id: string; familyId: string; subfamilyId: string; name: string; wbs?: string | null }[];
 };
 
 function resolveItemHierarchy(
@@ -35,8 +35,20 @@ function resolveItemHierarchy(
 ) {
   const family = taxonomy.families.find((entry) => entry.name === item.family) ?? null;
   const subfamily =
-    taxonomy.subfamilies.find((entry) => entry.name === item.subfamily) ?? null;
-  const group = taxonomy.groups.find((entry) => entry.name === item.itemGroup) ?? null;
+    family && item.subfamily
+      ? taxonomy.subfamilies.find(
+          (entry) => entry.familyId === family.id && entry.name === item.subfamily,
+        ) ?? null
+      : null;
+  const group =
+    family && subfamily && item.itemGroup
+      ? taxonomy.groups.find(
+          (entry) =>
+            entry.familyId === family.id &&
+            entry.subfamilyId === subfamily.id &&
+            entry.name === item.itemGroup,
+        ) ?? null
+      : null;
 
   return {
     familyName: item.family,
@@ -280,6 +292,9 @@ export default async function ContractItemsPage({
   const editUnitSortOrder = Array.isArray(resolvedSearchParams?.editUnitSortOrder)
     ? resolvedSearchParams?.editUnitSortOrder[0] ?? ""
     : resolvedSearchParams?.editUnitSortOrder ?? "";
+  const importMode = Array.isArray(resolvedSearchParams?.importMode)
+    ? resolvedSearchParams?.importMode[0] ?? "create"
+    : resolvedSearchParams?.importMode ?? "create";
 
   if (!contract) {
     notFound();
@@ -324,6 +339,34 @@ export default async function ContractItemsPage({
               </h2>
               {user.role === UserRole.ADMIN ? (
                 <ContractItemsAdminClient
+                  key={[
+                    modal,
+                    editItemId,
+                    importMode,
+                    draftFamilyId,
+                    draftSubfamilyId,
+                    draftGroupId,
+                    draftItemNumber,
+                    draftDescription,
+                    draftUnit,
+                    draftQuantity,
+                    draftUnitPrice,
+                    editFamilyId,
+                    editSubfamilyId,
+                    editGroupId,
+                    editItemNumber,
+                    editDescription,
+                    editUnit,
+                    editQuantity,
+                    editUnitPrice,
+                    draftUnitCode,
+                    draftUnitName,
+                    draftUnitSortOrder,
+                    editUnitId,
+                    editUnitCode,
+                    editUnitName,
+                    editUnitSortOrder,
+                  ].join("::")}
                   contractId={contract.id}
                   contractCode={contract.code}
                   items={contract.items}
@@ -363,6 +406,7 @@ export default async function ContractItemsPage({
                     name: editUnitName,
                     sortOrder: editUnitSortOrder,
                   }}
+                  importMode={importMode === "update" ? "update" : "create"}
                   showTable={false}
                   editMode={editMode}
                   taxonomyReady={hasContractTaxonomy}

@@ -99,6 +99,20 @@ type ContractItemCreateRow = {
   originalAmount: Prisma.Decimal;
 };
 
+type ContractItemUpdateRow = {
+  id: string;
+  family: string | null;
+  subfamily: string | null;
+  itemGroup: string | null;
+  itemNumber: string;
+  itemCode: string;
+  description: string;
+  unit: string | null;
+  originalQuantity: Prisma.Decimal;
+  unitPrice: Prisma.Decimal;
+  originalAmount: Prisma.Decimal;
+};
+
 type NormalizedItemInput = {
   family: string | null;
   subfamily: string | null;
@@ -117,6 +131,31 @@ type ResolvedItemTaxonomy = {
   subfamily: string | null;
   itemGroup: string | null;
 };
+
+type ContractItemImportMode = "create" | "update";
+
+type ParsedImportRow = {
+  rowNumber: number;
+  item: NormalizedItemInput;
+};
+
+type ValidatedContractItemImport =
+  | { error: string }
+  | {
+      mode: ContractItemImportMode;
+      contractCode: string;
+      createRows: ContractItemCreateRow[];
+      updateRows: ContractItemUpdateRow[];
+    };
+
+type ContractItemImportValidationResult =
+  | { error: string }
+  | {
+      success: string;
+      mode: ContractItemImportMode;
+      contractCode: string;
+      itemCount: number;
+    };
 
 function parseDecimal(value: string) {
   return parseDecimalInput(value);
@@ -245,6 +284,25 @@ function buildCreateRow(
   };
 }
 
+function buildUpdateRow(
+  itemId: string,
+  item: NormalizedItemInput,
+): ContractItemUpdateRow {
+  return {
+    id: itemId,
+    family: item.family,
+    subfamily: item.subfamily,
+    itemGroup: item.itemGroup,
+    itemNumber: item.itemNumber,
+    itemCode: item.itemCode,
+    description: item.description,
+    unit: item.unit,
+    originalQuantity: item.quantity,
+    unitPrice: item.unitPrice,
+    originalAmount: item.originalAmount,
+  };
+}
+
 async function validateMeasurementUnit(unit: string | null) {
   if (!unit) {
     return "Selecciona una unidad de medida valida para la partida.";
@@ -351,18 +409,30 @@ async function resolveItemTaxonomyFromLabels(
   familyLabel: string,
   subfamilyLabel: string,
   groupLabel: string,
+  familyWbsLabel = "",
+  subfamilyWbsLabel = "",
+  groupWbsLabel = "",
 ): Promise<{ error: string } | ResolvedItemTaxonomy> {
-  if (!familyLabel.trim()) {
+  const normalizedFamilyLabel = familyLabel.trim().toLowerCase();
+  const normalizedSubfamilyLabel = subfamilyLabel.trim().toLowerCase();
+  const normalizedGroupLabel = groupLabel.trim().toLowerCase();
+  const normalizedFamilyWbsLabel = familyWbsLabel.trim().toLowerCase();
+  const normalizedSubfamilyWbsLabel = subfamilyWbsLabel.trim().toLowerCase();
+  const normalizedGroupWbsLabel = groupWbsLabel.trim().toLowerCase();
+
+  if (!normalizedFamilyLabel && !normalizedFamilyWbsLabel) {
     return {
-      error: "Cada partida importada debe indicar al menos una familia.",
+      error: "Cada partida importada debe indicar al menos una familia o su WBS.",
     };
   }
 
   const taxonomy = await getItemTaxonomyOptions(contractId);
   const family = taxonomy.families.find(
     (item: (typeof taxonomy.families)[number]) =>
-      item.name.toLowerCase() === familyLabel.toLowerCase() ||
-      (item.wbs?.toLowerCase() ?? "") === familyLabel.toLowerCase(),
+      (normalizedFamilyWbsLabel
+        ? (item.wbs?.trim().toLowerCase() ?? "") === normalizedFamilyWbsLabel
+        : item.name.toLowerCase() === normalizedFamilyLabel ||
+          (item.wbs?.toLowerCase() ?? "") === normalizedFamilyLabel),
   );
 
   if (!family) {
@@ -371,10 +441,10 @@ async function resolveItemTaxonomyFromLabels(
     };
   }
 
-  if (!subfamilyLabel.trim()) {
-    if (groupLabel.trim()) {
+  if (!normalizedSubfamilyLabel && !normalizedSubfamilyWbsLabel) {
+    if (normalizedGroupLabel || normalizedGroupWbsLabel) {
       return {
-        error: `El grupo ${groupLabel} requiere que tambien informes una subfamilia.`,
+        error: `El grupo ${groupLabel || groupWbsLabel} requiere que tambien informes una subfamilia.`,
       };
     }
 
@@ -388,8 +458,10 @@ async function resolveItemTaxonomyFromLabels(
   const subfamily = taxonomy.subfamilies.find(
     (item: (typeof taxonomy.subfamilies)[number]) =>
       item.familyId === family.id &&
-      (item.name.toLowerCase() === subfamilyLabel.toLowerCase() ||
-        (item.wbs?.toLowerCase() ?? "") === subfamilyLabel.toLowerCase()),
+      (normalizedSubfamilyWbsLabel
+        ? (item.wbs?.trim().toLowerCase() ?? "") === normalizedSubfamilyWbsLabel
+        : item.name.toLowerCase() === normalizedSubfamilyLabel ||
+          (item.wbs?.toLowerCase() ?? "") === normalizedSubfamilyLabel),
   );
 
   if (!subfamily) {
@@ -398,7 +470,7 @@ async function resolveItemTaxonomyFromLabels(
     };
   }
 
-  if (!groupLabel.trim()) {
+  if (!normalizedGroupLabel && !normalizedGroupWbsLabel) {
     return {
       family: family.name,
       subfamily: subfamily.name,
@@ -409,8 +481,10 @@ async function resolveItemTaxonomyFromLabels(
   const group = taxonomy.groups.find(
     (item: (typeof taxonomy.groups)[number]) =>
       item.subfamilyId === subfamily.id &&
-      (item.name.toLowerCase() === groupLabel.toLowerCase() ||
-        (item.wbs?.toLowerCase() ?? "") === groupLabel.toLowerCase()),
+      (normalizedGroupWbsLabel
+        ? (item.wbs?.trim().toLowerCase() ?? "") === normalizedGroupWbsLabel
+        : item.name.toLowerCase() === normalizedGroupLabel ||
+          (item.wbs?.toLowerCase() ?? "") === normalizedGroupLabel),
   );
 
   if (!group) {
@@ -447,6 +521,265 @@ async function recalculateContractOriginalAmount(
       originalAmount: aggregate._sum.originalAmount ?? new Prisma.Decimal(0),
     },
   });
+}
+
+function resolveContractItemImportMode(
+  value: FormDataEntryValue | null,
+): ContractItemImportMode | null {
+  const mode = String(value ?? "create").trim().toLowerCase();
+
+  if (mode === "create" || mode === "update") {
+    return mode;
+  }
+
+  return null;
+}
+
+async function validateContractItemsImport(
+  formData: FormData,
+): Promise<ValidatedContractItemImport> {
+  const contractId = String(formData.get("contractId") ?? "").trim();
+  const file = formData.get("file");
+  const mode = resolveContractItemImportMode(formData.get("importMode"));
+
+  if (!contractId) {
+    return {
+      error: "Contrato no valido para importar partidas.",
+    };
+  }
+
+  if (!mode) {
+    return {
+      error: "Selecciona si la importacion va a crear o actualizar partidas.",
+    };
+  }
+
+  if (!(file instanceof File) || file.size === 0) {
+    return {
+      error: "Selecciona un archivo Excel valido para importar.",
+    };
+  }
+
+  const prisma = getPrisma();
+  const contract = await prisma.contract.findUnique({
+    where: {
+      id: contractId,
+    },
+    select: {
+      id: true,
+      code: true,
+      items: {
+        select: {
+          id: true,
+          itemNumber: true,
+        },
+      },
+    },
+  });
+
+  if (!contract) {
+    return {
+      error: "No encontre el contrato seleccionado.",
+    };
+  }
+
+  let rows: Record<string, unknown>[];
+
+  try {
+    const bytes = await file.arrayBuffer();
+    const workbook = XLSX.read(Buffer.from(bytes), { type: "buffer" });
+    const sheetName = workbook.SheetNames[0];
+
+    if (!sheetName) {
+      return {
+        error: "El archivo Excel no contiene hojas para importar.",
+      };
+    }
+
+    rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[sheetName], {
+      defval: "",
+    });
+  } catch {
+    return {
+      error: "No pude leer el archivo Excel seleccionado.",
+    };
+  }
+
+  if (rows.length === 0) {
+    return {
+      error: "El archivo Excel no trae filas de partidas.",
+    };
+  }
+
+  const parsedRows: ParsedImportRow[] = [];
+  const seenItemNumbers = new Set<string>();
+
+  for (const [index, row] of rows.entries()) {
+    const rowNumber = index + 2;
+    const itemNumber = getTextCell(row, [
+      "numeroItem",
+      "numero_item",
+      "numero",
+      "Numero",
+      "Número",
+      "itemNumber",
+      "item",
+      "Item",
+    ]);
+    const family = getTextCell(row, ["familia", "Familia", "family"]);
+    const familyWbs = getTextCell(row, ["familiaWbs", "familia_wbs", "familyWbs", "wbsFamilia"]);
+    const subfamily = getTextCell(row, ["subfamilia", "Subfamilia", "subfamily"]);
+    const subfamilyWbs = getTextCell(row, [
+      "subfamiliaWbs",
+      "subfamilia_wbs",
+      "subfamilyWbs",
+      "wbsSubfamilia",
+    ]);
+    const itemGroup = getTextCell(row, ["grupo", "Grupo", "itemGroup", "group"]);
+    const itemGroupWbs = getTextCell(row, [
+      "grupoWbs",
+      "grupo_wbs",
+      "itemGroupWbs",
+      "groupWbs",
+      "wbsGrupo",
+    ]);
+    const description = getTextCell(row, [
+      "descripcion",
+      "Descripción",
+      "DESCRIPCION",
+      "description",
+      "Descripcion",
+    ]);
+    const unit = getTextCell(row, ["unidad", "Unidad", "unit", "UM"]);
+    const quantity = getTextCell(row, ["cantidad", "Cantidad", "quantity"]);
+    const unitPrice = getTextCell(row, [
+      "precioUnitario",
+      "precio_unitario",
+      "PrecioUnitario",
+      "precio",
+      "Precio",
+      "unitPrice",
+    ]);
+
+    if (!itemNumber) {
+      return {
+        error: `La fila ${rowNumber} no indica numero de itemizado.`,
+      };
+    }
+
+    if (seenItemNumbers.has(itemNumber)) {
+      return {
+        error: `La fila ${rowNumber} repite el numero de itemizado ${itemNumber} dentro del archivo.`,
+      };
+    }
+
+    seenItemNumbers.add(itemNumber);
+
+    const taxonomy = await resolveItemTaxonomyFromLabels(
+      contractId,
+      family,
+      subfamily,
+      itemGroup,
+      familyWbs,
+      subfamilyWbs,
+      itemGroupWbs,
+    );
+
+    if ("error" in taxonomy) {
+      return { error: `Fila ${rowNumber}: ${taxonomy.error}` };
+    }
+
+    const normalized = normalizeItemValues(
+      taxonomy.family,
+      taxonomy.subfamily,
+      taxonomy.itemGroup,
+      itemNumber,
+      description,
+      unit,
+      quantity,
+      unitPrice,
+    );
+
+    if ("error" in normalized) {
+      return { error: `Fila ${rowNumber}: ${normalized.error}` };
+    }
+
+    const unitValidation = await validateMeasurementUnit(normalized.item.unit);
+
+    if (unitValidation) {
+      return { error: `Fila ${rowNumber}: ${unitValidation}` };
+    }
+
+    parsedRows.push({
+      rowNumber,
+      item: normalized.item,
+    });
+  }
+
+  const existingByItemNumber = new Map(
+    contract.items.map((item) => [item.itemNumber, item]),
+  );
+
+  if (mode === "create") {
+    const conflictingItem = parsedRows.find((row) =>
+      existingByItemNumber.has(row.item.itemNumber),
+    );
+
+    if (conflictingItem) {
+      return {
+        error: `La fila ${conflictingItem.rowNumber} usa el item ${conflictingItem.item.itemNumber}, pero ese numero ya existe en ${contract.code}.`,
+      };
+    }
+
+    return {
+      mode,
+      contractCode: contract.code,
+      createRows: parsedRows.map((row) => buildCreateRow(contractId, row.item)),
+      updateRows: [],
+    };
+  }
+
+  const missingItem = parsedRows.find((row) => !existingByItemNumber.has(row.item.itemNumber));
+
+  if (missingItem) {
+    return {
+      error: `La fila ${missingItem.rowNumber} intenta actualizar el item ${missingItem.item.itemNumber}, pero ese numero no existe en ${contract.code}.`,
+    };
+  }
+
+  return {
+    mode,
+    contractCode: contract.code,
+    createRows: [],
+    updateRows: parsedRows.map((row) =>
+      buildUpdateRow(existingByItemNumber.get(row.item.itemNumber)!.id, row.item),
+    ),
+  };
+}
+
+export async function validateContractItemsImportFromFile(
+  formData: FormData,
+): Promise<ContractItemImportValidationResult> {
+  const validatedImport = await validateContractItemsImport(formData);
+
+  if ("error" in validatedImport) {
+    return validatedImport;
+  }
+
+  const itemCount =
+    validatedImport.mode === "create"
+      ? validatedImport.createRows.length
+      : validatedImport.updateRows.length;
+
+  return {
+    success:
+      validatedImport.mode === "create"
+        ? `Archivo validado: ${itemCount} partidas listas para cargar en ${validatedImport.contractCode}.`
+        : `Archivo validado: ${itemCount} partidas listas para actualizar en ${validatedImport.contractCode}.`,
+    mode: validatedImport.mode,
+    contractCode: validatedImport.contractCode,
+    itemCount,
+  };
 }
 
 function parseClosureLines(source: string): ParsedClosureRowsResult {
@@ -791,156 +1124,66 @@ export async function importContractItemsFromFile(
   formData: FormData,
 ): Promise<MutationResult> {
   const contractId = String(formData.get("contractId") ?? "").trim();
-  const file = formData.get("file");
+  const validatedImport = await validateContractItemsImport(formData);
 
-  if (!contractId) {
-    return {
-      error: "Contrato no valido para importar partidas.",
-    };
-  }
-
-  if (!(file instanceof File) || file.size === 0) {
-    return {
-      error: "Selecciona un archivo Excel valido para importar.",
-    };
+  if ("error" in validatedImport) {
+    return validatedImport;
   }
 
   const prisma = getPrisma();
-  const contract = await prisma.contract.findUnique({
-    where: {
-      id: contractId,
-    },
-    select: {
-      id: true,
-      code: true,
-    },
-  });
-
-  if (!contract) {
-    return {
-      error: "No encontre el contrato seleccionado.",
-    };
-  }
-
-  let rows: Record<string, unknown>[];
-
-  try {
-    const bytes = await file.arrayBuffer();
-    const workbook = XLSX.read(Buffer.from(bytes), { type: "buffer" });
-    const sheetName = workbook.SheetNames[0];
-
-    if (!sheetName) {
-      return {
-        error: "El archivo Excel no contiene hojas para importar.",
-      };
-    }
-
-    rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[sheetName], {
-      defval: "",
-    });
-  } catch {
-    return {
-      error: "No pude leer el archivo Excel seleccionado.",
-    };
-  }
-
-  if (rows.length === 0) {
-    return {
-      error: "El archivo Excel no trae filas de partidas.",
-    };
-  }
-
-  const itemPayload: ContractItemCreateRow[] = [];
-
-  for (const row of rows) {
-    const itemNumber = getTextCell(row, [
-      "numeroItem",
-      "numero_item",
-      "numero",
-      "Numero",
-      "Número",
-      "itemNumber",
-      "item",
-      "Item",
-    ]);
-    const family = getTextCell(row, ["familia", "Familia", "family"]);
-    const subfamily = getTextCell(row, ["subfamilia", "Subfamilia", "subfamily"]);
-    const itemGroup = getTextCell(row, ["grupo", "Grupo", "itemGroup", "group"]);
-    const description = getTextCell(row, [
-      "descripcion",
-      "Descripción",
-      "DESCRIPCION",
-      "description",
-      "Descripcion",
-    ]);
-    const unit = getTextCell(row, ["unidad", "Unidad", "unit", "UM"]);
-    const quantity = getTextCell(row, ["cantidad", "Cantidad", "quantity"]);
-    const unitPrice = getTextCell(row, [
-      "precioUnitario",
-      "precio_unitario",
-      "PrecioUnitario",
-      "precio",
-      "Precio",
-      "unitPrice",
-    ]);
-
-    const taxonomy = await resolveItemTaxonomyFromLabels(
-      contractId,
-      family,
-      subfamily,
-      itemGroup,
-    );
-
-    if ("error" in taxonomy) {
-      return { error: taxonomy.error };
-    }
-
-    const normalized = normalizeItemValues(
-      taxonomy.family,
-      taxonomy.subfamily,
-      taxonomy.itemGroup,
-      itemNumber,
-      description,
-      unit,
-      quantity,
-      unitPrice,
-    );
-
-    if ("error" in normalized) {
-      return { error: normalized.error };
-    }
-
-    const unitValidation = await validateMeasurementUnit(normalized.item.unit);
-
-    if (unitValidation) {
-      return { error: unitValidation };
-    }
-
-    itemPayload.push(buildCreateRow(contractId, normalized.item));
-  }
 
   try {
     await prisma.$transaction(async (tx) => {
-      await tx.contractItem.createMany({
-        data: itemPayload,
-      });
+      if (validatedImport.mode === "create") {
+        await tx.contractItem.createMany({
+          data: validatedImport.createRows,
+        });
+      } else {
+        for (const row of validatedImport.updateRows) {
+          await tx.contractItem.update({
+            where: {
+              id: row.id,
+            },
+            data: {
+              family: row.family,
+              subfamily: row.subfamily,
+              itemGroup: row.itemGroup,
+              itemNumber: row.itemNumber,
+              itemCode: row.itemCode,
+              description: row.description,
+              unit: row.unit,
+              originalQuantity: row.originalQuantity,
+              unitPrice: row.unitPrice,
+              originalAmount: row.originalAmount,
+            },
+          });
+        }
+      }
       await recalculateContractOriginalAmount(tx, contractId);
     });
   } catch (error) {
     if (error instanceof Error && error.message.includes("Unique constraint")) {
       return {
         error:
-          "La importacion contiene numeros de itemizado repetidos o ya existentes en el contrato.",
+          validatedImport.mode === "create"
+            ? "La importacion contiene numeros de itemizado repetidos o ya existentes en el contrato."
+            : "La actualizacion masiva genera un conflicto con numeros de itemizado existentes en el contrato.",
       };
     }
 
     return {
-      error: "No pude importar el archivo Excel de partidas.",
+      error:
+        validatedImport.mode === "create"
+          ? "No pude importar el archivo Excel de partidas."
+          : "No pude actualizar el archivo Excel de partidas.",
     };
   }
 
   return {
-    success: `Importacion completada: ${itemPayload.length} partidas cargadas en ${contract.code}.`,
+    success:
+      validatedImport.mode === "create"
+        ? `Importacion completada: ${validatedImport.createRows.length} partidas cargadas en ${validatedImport.contractCode}.`
+        : `Actualizacion completada: ${validatedImport.updateRows.length} partidas actualizadas en ${validatedImport.contractCode}.`,
   };
 }
 

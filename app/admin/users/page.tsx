@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { manageUserAction } from "@/app/admin/users/actions";
 import { AppShell } from "@/components/app-shell";
 import { FlashBanner } from "@/components/flash-banner";
 import { requireAdmin } from "@/lib/auth";
@@ -46,9 +47,8 @@ export default async function AdminUsersPage({
             </p>
           </div>
 
-          <form action="/api/users" method="post" className="space-y-5">
+          <form action={manageUserAction} className="space-y-5">
             <input type="hidden" name="action" value="create" />
-            <input type="hidden" name="redirectTo" value="/admin/users" />
             <Field label="Nombre" name="name" placeholder="Nombre completo" />
             <Field label="Correo" name="email" placeholder="usuario@empresa.cl" />
             <Field label="Contrasena inicial" name="password" placeholder="Contrasena temporal" />
@@ -109,10 +109,9 @@ export default async function AdminUsersPage({
                 </div>
 
                 <div className="mt-4 grid gap-3 lg:grid-cols-3">
-                  <form action="/api/users" method="post" className="rounded-2xl bg-white p-4">
+                  <form action={manageUserAction} className="rounded-2xl bg-white p-4">
                     <input type="hidden" name="action" value="update-role" />
                     <input type="hidden" name="userId" value={account.id} />
-                    <input type="hidden" name="redirectTo" value="/admin/users" />
                     <label className="block text-xs font-medium uppercase tracking-[0.15em] text-slate-400">
                       Rol
                     </label>
@@ -132,10 +131,9 @@ export default async function AdminUsersPage({
                     </button>
                   </form>
 
-                  <form action="/api/users" method="post" className="rounded-2xl bg-white p-4">
+                  <form action={manageUserAction} className="rounded-2xl bg-white p-4">
                     <input type="hidden" name="action" value="toggle-active" />
                     <input type="hidden" name="userId" value={account.id} />
-                    <input type="hidden" name="redirectTo" value="/admin/users" />
                     <input
                       type="hidden"
                       name="active"
@@ -157,10 +155,9 @@ export default async function AdminUsersPage({
                     </button>
                   </form>
 
-                  <form action="/api/users" method="post" className="rounded-2xl bg-white p-4">
+                  <form action={manageUserAction} className="rounded-2xl bg-white p-4">
                     <input type="hidden" name="action" value="reset-password" />
                     <input type="hidden" name="userId" value={account.id} />
-                    <input type="hidden" name="redirectTo" value="/admin/users" />
                     <label className="block text-xs font-medium uppercase tracking-[0.15em] text-slate-400">
                       Nueva contrasena
                     </label>

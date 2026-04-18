@@ -1,21 +1,25 @@
+"use server";
+
 import { randomUUID } from "node:crypto";
-import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { UserRole } from "@prisma/client";
-import { getCurrentUser } from "@/lib/auth";
+import { requireAdmin } from "@/lib/auth";
 import { hashPassword } from "@/lib/password";
 import { getPrisma, prismaSupportsAuthUserId } from "@/lib/prisma";
 import { createSupabaseServiceClient } from "@/lib/supabase/service";
 
-function redirectWithMessage(request: Request, type: "success" | "error", message: string) {
-  const redirectTarget = new URL(request.url).searchParams.get("redirectTo") ?? "/admin/users";
+function buildRedirectUrl(type: "success" | "error", message: string) {
   const params = new URLSearchParams({
     type,
     message,
   });
 
-  return NextResponse.redirect(new URL(`${redirectTarget}?${params.toString()}`, request.url), {
-    status: 303,
-  });
+  return `/admin/users?${params.toString()}`;
+}
+
+function redirectWithMessage(type: "success" | "error", message: string): never {
+  redirect(buildRedirectUrl(type, message));
 }
 
 async function findSupabaseUserIdByEmail(
@@ -51,22 +55,13 @@ async function findSupabaseUserIdByEmail(
   }
 }
 
-export async function POST(request: Request) {
-  const currentUser = await getCurrentUser();
-
-  if (!currentUser || currentUser.role !== UserRole.ADMIN) {
-    return redirectWithMessage(request, "error", "No+tienes+permiso+para+administrar+usuarios.");
-  }
+export async function manageUserAction(formData: FormData) {
+  await requireAdmin();
 
   const prisma = getPrisma();
   const supportsAuthUserId = prismaSupportsAuthUserId();
   const supabase = createSupabaseServiceClient();
-  const formData = await request.formData();
   const action = String(formData.get("action") ?? "create");
-  const redirectTo = String(formData.get("redirectTo") ?? "/admin/users");
-  const url = new URL(request.url);
-  url.searchParams.set("redirectTo", redirectTo);
-  const rerouteRequest = new Request(url, request);
 
   if (action === "create") {
     const name = String(formData.get("name") ?? "").trim();
@@ -75,7 +70,7 @@ export async function POST(request: Request) {
     const role = String(formData.get("role") ?? UserRole.VIEWER);
 
     if (!name || !email || !password) {
-      return redirectWithMessage(rerouteRequest, "error", "Completa+nombre%2C+correo+y+contrasena+del+usuario.");
+      redirectWithMessage("error", "Completa nombre, correo y contrasena del usuario.");
     }
 
     let createdAuthUserId: string | null = null;
@@ -91,10 +86,9 @@ export async function POST(request: Request) {
       });
 
       if (authError || !createdAuthUser.user) {
-        return redirectWithMessage(
-          rerouteRequest,
+        redirectWithMessage(
           "error",
-          "No+se+pudo+crear+el+usuario+en+Supabase.+Revisa+si+el+correo+ya+existe.",
+          "No se pudo crear el usuario en Supabase. Revisa si el correo ya existe.",
         );
       }
 
@@ -114,20 +108,21 @@ export async function POST(request: Request) {
       if (createdAuthUserId) {
         await supabase.auth.admin.deleteUser(createdAuthUserId).catch(() => undefined);
       }
-      return redirectWithMessage(
-        rerouteRequest,
+
+      redirectWithMessage(
         "error",
-        "No+se+pudo+crear+el+usuario+interno.+Revisa+si+el+correo+ya+existe.",
+        "No se pudo crear el usuario interno. Revisa si el correo ya existe.",
       );
     }
 
-    return redirectWithMessage(rerouteRequest, "success", "Usuario+creado+correctamente.");
+    revalidatePath("/admin/users");
+    redirectWithMessage("success", "Usuario creado correctamente.");
   }
 
   const userId = String(formData.get("userId") ?? "").trim();
 
   if (!userId) {
-    return redirectWithMessage(rerouteRequest, "error", "Usuario+no+valido+para+la+operacion.");
+    redirectWithMessage("error", "Usuario no valido para la operacion.");
   }
 
   if (action === "toggle-active") {
@@ -142,11 +137,8 @@ export async function POST(request: Request) {
       },
     });
 
-    return redirectWithMessage(
-      rerouteRequest,
-      "success",
-      active ? "Usuario+activado." : "Usuario+desactivado.",
-    );
+    revalidatePath("/admin/users");
+    redirectWithMessage("success", active ? "Usuario activado." : "Usuario desactivado.");
   }
 
   if (action === "update-role") {
@@ -161,14 +153,15 @@ export async function POST(request: Request) {
       },
     });
 
-    return redirectWithMessage(rerouteRequest, "success", "Rol+actualizado.");
+    revalidatePath("/admin/users");
+    redirectWithMessage("success", "Rol actualizado.");
   }
 
   if (action === "reset-password") {
     const password = String(formData.get("password") ?? "");
 
     if (!password) {
-      return redirectWithMessage(rerouteRequest, "error", "Ingresa+una+nueva+contrasena.");
+      redirectWithMessage("error", "Ingresa una nueva contrasena.");
     }
 
     const targetUser = await prisma.user.findUnique({
@@ -178,7 +171,7 @@ export async function POST(request: Request) {
     });
 
     if (!targetUser) {
-      return redirectWithMessage(rerouteRequest, "error", "Usuario+no+encontrado.");
+      redirectWithMessage("error", "Usuario no encontrado.");
     }
 
     let authUserId = targetUser.authUserId;
@@ -187,11 +180,7 @@ export async function POST(request: Request) {
       try {
         authUserId = await findSupabaseUserIdByEmail(supabase, targetUser.email);
       } catch {
-        return redirectWithMessage(
-          rerouteRequest,
-          "error",
-          "No+se+pudo+consultar+la+cuenta+en+Supabase.",
-        );
+        redirectWithMessage("error", "No se pudo consultar la cuenta en Supabase.");
       }
     }
 
@@ -202,11 +191,7 @@ export async function POST(request: Request) {
       });
 
       if (error) {
-        return redirectWithMessage(
-          rerouteRequest,
-          "error",
-          "No+se+pudo+actualizar+la+clave+en+Supabase.",
-        );
+        redirectWithMessage("error", "No se pudo actualizar la clave en Supabase.");
       }
 
       if (supportsAuthUserId && targetUser.authUserId !== authUserId) {
@@ -230,10 +215,9 @@ export async function POST(request: Request) {
       });
 
       if (error || !createdAuthUser.user) {
-        return redirectWithMessage(
-          rerouteRequest,
+        redirectWithMessage(
           "error",
-          "No+se+pudo+crear+la+cuenta+en+Supabase+para+este+usuario.",
+          "No se pudo crear la cuenta en Supabase para este usuario.",
         );
       }
 
@@ -260,12 +244,9 @@ export async function POST(request: Request) {
       },
     });
 
-    return redirectWithMessage(
-      rerouteRequest,
-      "success",
-      "Contrasena+actualizada+en+Supabase.",
-    );
+    revalidatePath("/admin/users");
+    redirectWithMessage("success", "Contrasena actualizada en Supabase.");
   }
 
-  return redirectWithMessage(rerouteRequest, "error", "Accion+no+soportada.");
+  redirectWithMessage("error", "Accion no soportada.");
 }

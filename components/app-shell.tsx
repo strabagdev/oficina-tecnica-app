@@ -6,14 +6,8 @@ import type { AuthUser } from "@/lib/auth";
 const navigation = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/contracts", label: "Contratos" },
-  { href: "/contracts/new", label: "Nuevo contrato" },
   { href: "/admin/users", label: "Usuarios", adminOnly: true },
 ];
-
-const roleLabels = {
-  [UserRole.ADMIN]: "Administrador",
-  [UserRole.VIEWER]: "Visualizador",
-};
 
 export function AppShell({
   user,
@@ -47,9 +41,6 @@ export function AppShell({
                   {description}
                 </p>
               </div>
-              <p className="text-sm text-slate-400">
-                Sesion: {user.name} · {roleLabels[user.role]}
-              </p>
             </div>
 
             <div className="flex flex-col gap-2.5">
@@ -77,12 +68,15 @@ export function AppShell({
                   })}
               </div>
 
-              <div className="flex flex-wrap items-center gap-3">
-                {actions}
-                <form action={logoutAction}>
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                {actions ? <div className="flex flex-wrap gap-2">{actions}</div> : null}
+                <span className="shrink-0 rounded-full border border-white/20 bg-white/10 px-4 py-2 text-sm font-medium leading-none text-white whitespace-nowrap">
+                  {user.name || user.email}
+                </span>
+                <form action={logoutAction} className="shrink-0">
                   <button
                     type="submit"
-                    className="rounded-full border border-white/20 px-5 py-2.5 text-sm font-medium leading-none text-white transition hover:bg-white/10"
+                    className="whitespace-nowrap rounded-full border border-white/20 px-5 py-2.5 text-sm font-medium leading-none text-white transition hover:bg-white/10"
                   >
                     Cerrar sesion
                   </button>

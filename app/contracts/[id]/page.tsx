@@ -27,6 +27,11 @@ export default async function ContractDetailPage({
     notFound();
   }
 
+  const contractDuration = formatContractDuration(
+    contract.startDateValue,
+    contract.endDateValue,
+  );
+
   return (
     <AppShell
       user={user}
@@ -54,48 +59,31 @@ export default async function ContractDetailPage({
     >
       <ContractNav contractId={id} active="overview" userRole={user.role} />
 
-      <section className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+      <section>
         <article className="rounded-[2rem] border border-slate-200 bg-white p-7 shadow-[0_20px_50px_rgba(15,23,42,0.06)]">
-          <h2 className="text-2xl font-semibold text-slate-950">Resumen contractual</h2>
-          <div className="mt-6 grid gap-4 md:grid-cols-2">
+          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+            <h2 className="text-2xl font-semibold text-slate-950">Resumen contractual</h2>
+            {user.role === UserRole.ADMIN ? (
+              <Link
+                href={`/contracts/${id}/edit`}
+                className="rounded-full border border-slate-300 px-5 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-900 hover:text-slate-950"
+              >
+                Editar cabecera
+              </Link>
+            ) : null}
+          </div>
+          <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <DataPill label="Mandante" value={contract.clientName} />
             <DataPill label="Estado" value={contract.status} />
             <DataPill label="Moneda" value={contract.currency} />
             <DataPill label="Monto contractual" value={contract.originalAmount} />
+            <DataPill label="Duracion del contrato" value={contractDuration} />
           </div>
           {contract.description ? (
             <p className="mt-6 text-sm leading-7 text-slate-600">
               {contract.description}
             </p>
           ) : null}
-        </article>
-
-        <article className="rounded-[2rem] border border-slate-200 bg-white p-7 shadow-[0_20px_50px_rgba(15,23,42,0.06)]">
-          <h2 className="text-2xl font-semibold text-slate-950">Modulos del contrato</h2>
-          <div className="mt-6 grid gap-4 md:grid-cols-3">
-            <ModuleCard
-              href={`/contracts/${id}/items`}
-              title="Partidas"
-              text={`${contract.itemCount} partidas cargadas en el itemizado base.`}
-            />
-            {user.role === UserRole.ADMIN ? (
-              <ModuleCard
-                href={`/contracts/${id}/taxonomy`}
-                title="Jerarquia"
-                text="Administra la estructura WBS propia del contrato."
-              />
-            ) : null}
-            <ModuleCard
-              href={`/contracts/${id}/closures`}
-              title="Cierres"
-              text={`${contract.closureCount} cierres recientes disponibles.`}
-            />
-            <ModuleCard
-              href={`/contracts/${id}/changes`}
-              title="NOC"
-              text={`${contract.changes.length} cambios cargados en la vista actual.`}
-            />
-          </div>
         </article>
       </section>
 
@@ -202,24 +190,48 @@ function DataPill({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ModuleCard({
-  href,
-  title,
-  text,
-}: {
-  href: string;
-  title: string;
-  text: string;
-}) {
-  return (
-    <Link
-      href={href}
-      className="rounded-3xl border border-slate-200 bg-slate-50 p-5 transition hover:border-slate-300 hover:bg-white"
-    >
-      <p className="text-lg font-semibold text-slate-950">{title}</p>
-      <p className="mt-2 text-sm leading-7 text-slate-600">{text}</p>
-    </Link>
-  );
+function formatContractDuration(startDateValue: string, endDateValue: string) {
+  if (!startDateValue || !endDateValue) {
+    return "Sin fechas";
+  }
+
+  const start = new Date(`${startDateValue}T00:00:00`);
+  const end = new Date(`${endDateValue}T00:00:00`);
+
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return "Sin fechas";
+  }
+
+  if (end < start) {
+    return "Fechas invalidas";
+  }
+
+  let months =
+    (end.getFullYear() - start.getFullYear()) * 12 +
+    (end.getMonth() - start.getMonth());
+
+  const anchor = new Date(start);
+  anchor.setMonth(anchor.getMonth() + months);
+
+  if (anchor > end) {
+    months -= 1;
+    anchor.setMonth(anchor.getMonth() - 1);
+  }
+
+  const millisecondsPerDay = 1000 * 60 * 60 * 24;
+  const days = Math.floor((end.getTime() - anchor.getTime()) / millisecondsPerDay);
+
+  if (months <= 0) {
+    return `${days + 1} dias`;
+  }
+
+  if (days <= 0) {
+    return months === 1 ? "1 mes" : `${months} meses`;
+  }
+
+  const monthLabel = months === 1 ? "1 mes" : `${months} meses`;
+  const dayLabel = days === 1 ? "1 dia" : `${days} dias`;
+  return `${monthLabel} y ${dayLabel}`;
 }
 
 function EmptyText({ text }: { text: string }) {

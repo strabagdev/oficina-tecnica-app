@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { UserRole } from "@prisma/client";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { ContractNav } from "@/components/contract-nav";
@@ -55,7 +54,7 @@ export default async function EditContractPage({
       <ContractNav contractId={id} active="overview" userRole={user.role} />
       <FlashBanner type={flashType} message={flashMessage} />
 
-      <section className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
+      <section>
         <article className="rounded-[2rem] border border-slate-200 bg-white p-7 shadow-[0_20px_50px_rgba(15,23,42,0.06)]">
           <h2 className="text-2xl font-semibold text-slate-950">Editar cabecera</h2>
           <p className="mt-2 text-sm leading-7 text-slate-600">
@@ -113,23 +112,6 @@ export default async function EditContractPage({
             </button>
           </form>
         </article>
-
-        <aside className="space-y-6">
-          <InfoCard
-            title="Separacion de etapas"
-            lines={[
-              "Crear contrato: genera la cabecera inicial.",
-              "Editar contrato: ajusta la cabecera despues.",
-              "Partidas: se crean, importan y editan en su modulo propio.",
-            ]}
-          />
-          <InfoCard
-            title="Siguiente paso"
-            lines={[
-              "Si cambias datos generales y luego necesitas trabajar el presupuesto, vuelve al modulo de partidas del contrato.",
-            ]}
-          />
-        </aside>
       </section>
     </AppShell>
   );
@@ -183,18 +165,5 @@ function SelectField(props: {
         ))}
       </select>
     </div>
-  );
-}
-
-function InfoCard({ title, lines }: { title: string; lines: string[] }) {
-  return (
-    <article className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-[0_20px_50px_rgba(15,23,42,0.06)]">
-      <h2 className="text-xl font-semibold text-slate-950">{title}</h2>
-      <ul className="mt-4 space-y-3 text-sm leading-7 text-slate-600">
-        {lines.map((line) => (
-          <li key={line}>{line}</li>
-        ))}
-      </ul>
-    </article>
   );
 }

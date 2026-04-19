@@ -505,8 +505,8 @@ export function ContractItemsAdminClient({
                     <th className="px-4 py-3 font-medium">Descripcion</th>
                     <th className="px-4 py-3 font-medium">Unidad</th>
                     <th className="px-4 py-3 font-medium">Cantidad</th>
-                    <th className="px-4 py-3 font-medium">P. unitario</th>
-                    <th className="px-4 py-3 font-medium">Monto base</th>
+                    <th className="px-4 py-3 font-medium whitespace-nowrap">P. unitario</th>
+                    <th className="px-4 py-3 font-medium whitespace-nowrap">Monto base</th>
                     <th className="px-4 py-3 font-medium">Acciones</th>
                   </tr>
                 </thead>
@@ -525,8 +525,12 @@ export function ContractItemsAdminClient({
                       </td>
                       <td className="px-4 py-3 text-slate-700">{item.unit ?? "-"}</td>
                       <td className="px-4 py-3 text-slate-700">{item.originalQuantityValue}</td>
-                      <td className="px-4 py-3 text-slate-700">{item.unitPriceValue}</td>
-                      <td className="px-4 py-3 text-slate-700">{item.originalAmount}</td>
+                      <td className="px-4 py-3 text-slate-700 whitespace-nowrap tabular-nums min-w-28">
+                        {item.unitPriceValue}
+                      </td>
+                      <td className="px-4 py-3 text-slate-700 whitespace-nowrap tabular-nums min-w-32">
+                        {item.originalAmount}
+                      </td>
                       <td className="px-4 py-3">
                         <button
                           type="button"
@@ -717,7 +721,6 @@ export function ContractItemsAdminClient({
               type="submit"
               disabled={
                 !isImportReady ||
-                importValidation.status === "validating" ||
                 importSubmission.status === "submitting"
               }
               className="rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"

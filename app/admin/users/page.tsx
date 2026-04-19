@@ -31,7 +31,7 @@ export default async function AdminUsersPage({
       user={user}
       pathname="/admin/users"
       title="Usuarios y permisos"
-      description="Crea nuevas cuentas en Supabase Auth, cambia roles internos y activa o desactiva accesos."
+      description="Aprueba solicitudes de acceso, crea cuentas directas en Supabase Auth y administra roles o bloqueos internos."
     >
       <FlashBanner type={flashType} message={flashMessage} />
 
@@ -40,10 +40,10 @@ export default async function AdminUsersPage({
           <div className="mb-6">
             <p className="text-sm font-medium text-teal-700">Accesos</p>
             <h2 className="mt-2 text-2xl font-semibold text-slate-950">
-              Crear usuario
+              Crear usuario inmediato
             </h2>
             <p className="mt-2 text-sm leading-7 text-slate-600">
-              Crea nuevas cuentas en Supabase Auth y define si tendran perfil de administrador o solo visualizacion dentro de la app.
+              Crea nuevas cuentas ya aprobadas en Supabase Auth y define si tendran perfil de administrador o solo visualizacion dentro de la app.
             </p>
           </div>
 
@@ -105,10 +105,44 @@ export default async function AdminUsersPage({
                     <span className="rounded-full bg-white px-3 py-1 text-slate-600">
                       {account.authUserId ? "Supabase vinculado" : "Pendiente de vincular"}
                     </span>
+                    <span
+                      className={`rounded-full px-3 py-1 ${
+                        account.approvalStatus === "APPROVED"
+                          ? "bg-emerald-100 text-emerald-700"
+                          : account.approvalStatus === "REJECTED"
+                            ? "bg-rose-100 text-rose-700"
+                            : "bg-amber-100 text-amber-700"
+                      }`}
+                    >
+                      {resolveApprovalStatusLabel(account.approvalStatus)}
+                    </span>
                   </div>
                 </div>
 
-                <div className="mt-4 grid gap-3 lg:grid-cols-3">
+                <div className="mt-4 grid gap-3 lg:grid-cols-4">
+                  <form action={manageUserAction} className="rounded-2xl bg-white p-4">
+                    <input type="hidden" name="action" value="update-approval-status" />
+                    <input type="hidden" name="userId" value={account.id} />
+                    <label className="block text-xs font-medium uppercase tracking-[0.15em] text-slate-400">
+                      Solicitud
+                    </label>
+                    <select
+                      name="approvalStatus"
+                      defaultValue={account.approvalStatus}
+                      className="mt-3 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#0f766e] focus:ring-4 focus:ring-[#99f6e4]"
+                    >
+                      <option value="PENDING">Pendiente</option>
+                      <option value="APPROVED">Aprobado</option>
+                      <option value="REJECTED">Rechazado</option>
+                    </select>
+                    <button
+                      type="submit"
+                      className="mt-3 w-full rounded-full border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-900 hover:text-slate-950"
+                    >
+                      Guardar solicitud
+                    </button>
+                  </form>
+
                   <form action={manageUserAction} className="rounded-2xl bg-white p-4">
                     <input type="hidden" name="action" value="update-role" />
                     <input type="hidden" name="userId" value={account.id} />
@@ -182,6 +216,18 @@ export default async function AdminUsersPage({
       </section>
     </AppShell>
   );
+}
+
+function resolveApprovalStatusLabel(status: "PENDING" | "APPROVED" | "REJECTED") {
+  if (status === "APPROVED") {
+    return "Aprobado";
+  }
+
+  if (status === "REJECTED") {
+    return "Rechazado";
+  }
+
+  return "Pendiente";
 }
 
 function Field(props: {

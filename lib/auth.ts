@@ -7,6 +7,7 @@ import { UserRole } from "@prisma/client";
 import { getPrisma, prismaSupportsAuthUserId } from "@/lib/prisma";
 import { hashPassword } from "@/lib/password";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { USER_APPROVAL_STATUS } from "@/lib/user-approval-status";
 
 type AuthSeedUser = {
   email: string;
@@ -20,6 +21,20 @@ export type AuthUser = {
   email: string;
   role: UserRole;
 };
+
+type SyncedUserResult =
+  | { status: "approved"; user: AuthUser }
+  | { status: "pending" }
+  | { status: "rejected" }
+  | { status: "inactive" }
+  | { status: "missing-email" };
+
+export type LoginAttemptResult =
+  | { status: "success"; user: AuthUser }
+  | { status: "invalid-credentials" }
+  | { status: "pending-approval" }
+  | { status: "rejected" }
+  | { status: "inactive" };
 
 function getSeedUsers(): AuthSeedUser[] {
   const adminEmail = process.env.ADMIN_EMAIL?.trim();
@@ -53,6 +68,35 @@ function getAuthDisplayName(user: Pick<SupabaseUser, "email" | "user_metadata">)
   return user.email?.split("@")[0] || "Usuario";
 }
 
+async function getUserApprovalStatus(prisma: ReturnType<typeof getPrisma>, userId: string) {
+  const rows = await prisma.$queryRaw<{ approvalStatus: string }[]>`
+    select "approvalStatus" from "User" where id = ${userId}
+  `;
+
+  return rows[0]?.approvalStatus ?? USER_APPROVAL_STATUS.APPROVED;
+}
+
+async function updateUserApprovalStatus(
+  prisma: ReturnType<typeof getPrisma>,
+  userId: string,
+  approvalStatus: string,
+) {
+  await prisma.$executeRaw`
+    update "User" set "approvalStatus" = ${approvalStatus} where id = ${userId}
+  `;
+}
+
+async function countUsersByApprovalStatus(
+  prisma: ReturnType<typeof getPrisma>,
+  approvalStatus: string,
+) {
+  const rows = await prisma.$queryRaw<{ count: bigint }[]>`
+    select count(*)::bigint as count from "User" where "approvalStatus" = ${approvalStatus}::"UserApprovalStatus"
+  `;
+
+  return Number(rows[0]?.count ?? 0);
+}
+
 export async function ensureBaseUsers() {
   const prisma = getPrisma();
   const count = await prisma.user.count();
@@ -72,6 +116,7 @@ export async function ensureBaseUsers() {
       email: user.email.toLowerCase(),
       name: user.name,
       role: user.role,
+      approvalStatus: USER_APPROVAL_STATUS.APPROVED,
       passwordHash: buildPlaceholderPasswordHash(),
     })),
   });
@@ -79,24 +124,30 @@ export async function ensureBaseUsers() {
 
 export async function getLoginSetup() {
   const prisma = getPrisma();
-  const userCount = await prisma.user.count();
+  const [userCount, approvedUsers, pendingUsers] = await Promise.all([
+    prisma.user.count(),
+    countUsersByApprovalStatus(prisma, USER_APPROVAL_STATUS.APPROVED),
+    countUsersByApprovalStatus(prisma, USER_APPROVAL_STATUS.PENDING),
+  ]);
   const hasBootstrapAdmin = Boolean(process.env.ADMIN_EMAIL?.trim());
 
   return {
     userCount,
+    approvedUsers,
+    pendingUsers,
     hasBootstrapAdmin: hasBootstrapAdmin || userCount > 0,
-    bootstrapPending: userCount === 0,
+    bootstrapPending: approvedUsers === 0,
   };
 }
 
-async function syncInternalUser(authUser: SupabaseUser) {
+async function syncInternalUser(authUser: SupabaseUser): Promise<SyncedUserResult> {
   await ensureBaseUsers();
   const prisma = getPrisma();
   const supportsAuthUserId = prismaSupportsAuthUserId();
   const email = authUser.email?.trim().toLowerCase();
 
   if (!email) {
-    return null;
+    return { status: "missing-email" };
   }
 
   const existingUser = await prisma.user.findFirst({
@@ -136,17 +187,37 @@ async function syncInternalUser(authUser: SupabaseUser) {
           ...(supportsAuthUserId ? { authUserId: authUser.id } : {}),
         },
       });
+  const approvalStatus = existingUser
+    ? await getUserApprovalStatus(prisma, user.id)
+    : bootstrapAdminEmail === email
+      ? USER_APPROVAL_STATUS.APPROVED
+      : USER_APPROVAL_STATUS.PENDING;
+
+  if (!existingUser) {
+    await updateUserApprovalStatus(prisma, user.id, approvalStatus);
+  }
 
   if (!user.active) {
-    return null;
+    return { status: "inactive" };
+  }
+
+  if (approvalStatus === USER_APPROVAL_STATUS.PENDING) {
+    return { status: "pending" };
+  }
+
+  if (approvalStatus === USER_APPROVAL_STATUS.REJECTED) {
+    return { status: "rejected" };
   }
 
   return {
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    role: user.role,
-  } satisfies AuthUser;
+    status: "approved",
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+    } satisfies AuthUser,
+  };
 }
 
 export async function deleteSession() {
@@ -154,7 +225,10 @@ export async function deleteSession() {
   await supabase.auth.signOut();
 }
 
-export async function loginWithPassword(email: string, password: string) {
+export async function loginWithPassword(
+  email: string,
+  password: string,
+): Promise<LoginAttemptResult> {
   const supabase = await createSupabaseServerClient();
   const normalizedEmail = email.toLowerCase();
   const { data, error } = await supabase.auth.signInWithPassword({
@@ -163,17 +237,26 @@ export async function loginWithPassword(email: string, password: string) {
   });
 
   if (error || !data.user) {
-    return null;
+    return { status: "invalid-credentials" };
   }
 
-  const user = await syncInternalUser(data.user);
+  const syncResult = await syncInternalUser(data.user);
 
-  if (!user) {
+  if (syncResult.status !== "approved") {
     await supabase.auth.signOut();
-    return null;
+
+    if (syncResult.status === "pending") {
+      return { status: "pending-approval" };
+    }
+
+    if (syncResult.status === "rejected") {
+      return { status: "rejected" };
+    }
+
+    return { status: "inactive" };
   }
 
-  return user;
+  return { status: "success", user: syncResult.user };
 }
 
 export async function getCurrentUser() {
@@ -187,7 +270,14 @@ export async function getCurrentUser() {
     return null;
   }
 
-  return syncInternalUser(user);
+  const syncResult = await syncInternalUser(user);
+
+  if (syncResult.status !== "approved") {
+    await supabase.auth.signOut();
+    return null;
+  }
+
+  return syncResult.user;
 }
 
 export async function requireUser() {

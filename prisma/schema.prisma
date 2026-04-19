@@ -11,6 +11,12 @@ enum UserRole {
   VIEWER
 }
 
+enum UserApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 enum ContractStatus {
   DRAFT
   ACTIVE
@@ -43,6 +49,7 @@ model User {
   email        String    @unique
   passwordHash String
   role         UserRole
+  approvalStatus UserApprovalStatus @default(APPROVED)
   active       Boolean   @default(true)
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt

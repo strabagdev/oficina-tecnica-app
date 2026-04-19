@@ -25,11 +25,14 @@ function createPrismaClient() {
 }
 
 function hasLatestDelegates(prisma: PrismaClient) {
+  const userModel = Prisma.dmmf.datamodel.models.find((model) => model.name === "User");
+
   return (
     "measurementUnit" in prisma &&
     "itemFamily" in prisma &&
     "itemSubfamily" in prisma &&
-    "itemGroupCatalog" in prisma
+    "itemGroupCatalog" in prisma &&
+    Boolean(userModel?.fields.some((field) => field.name === "approvalStatus"))
   );
 }
 
@@ -39,7 +42,6 @@ export function getPrisma() {
       return globalForPrisma.prisma;
     }
 
-    void globalForPrisma.prisma.$disconnect().catch(() => undefined);
     globalForPrisma.prisma = undefined;
   }
 

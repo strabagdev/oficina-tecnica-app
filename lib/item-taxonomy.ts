@@ -1,6 +1,5 @@
 import "server-only";
 
-import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 
 type ItemTaxonomyScope = {
@@ -13,12 +12,59 @@ async function resolveItemTaxonomyScope(contractId?: string | null): Promise<Ite
   };
 }
 
-function buildFamilyOrderBy(scope: ItemTaxonomyScope): Prisma.ItemFamilyOrderByWithRelationInput[] {
-  if (scope.contractId) {
-    return [{ wbs: "asc" }, { code: "asc" }];
+function tokenizeWbs(value: string | null | undefined) {
+  return (value ?? "")
+    .split(/[^\dA-Za-z]+/)
+    .filter(Boolean)
+    .map((part) => (/^\d+$/.test(part) ? Number(part) : part.toLowerCase()));
+}
+
+function compareWbsLike(
+  left: string | null | undefined,
+  right: string | null | undefined,
+  leftFallback = "",
+  rightFallback = "",
+) {
+  const leftTokens = tokenizeWbs(left);
+  const rightTokens = tokenizeWbs(right);
+  const length = Math.max(leftTokens.length, rightTokens.length);
+
+  for (let index = 0; index < length; index += 1) {
+    const leftToken = leftTokens[index];
+    const rightToken = rightTokens[index];
+
+    if (leftToken === undefined) {
+      return -1;
+    }
+
+    if (rightToken === undefined) {
+      return 1;
+    }
+
+    if (leftToken === rightToken) {
+      continue;
+    }
+
+    if (typeof leftToken === "number" && typeof rightToken === "number") {
+      return leftToken - rightToken;
+    }
+
+    return String(leftToken).localeCompare(String(rightToken), "es", {
+      numeric: true,
+      sensitivity: "base",
+    });
   }
 
-  return [{ wbs: "asc" }, { code: "asc" }];
+  return leftFallback.localeCompare(rightFallback, "es", {
+    numeric: true,
+    sensitivity: "base",
+  });
+}
+
+function sortTaxonomyRows<T extends { wbs?: string | null; name: string }>(rows: T[]) {
+  return [...rows].sort((left, right) =>
+    compareWbsLike(left.wbs, right.wbs, left.name, right.name),
+  );
 }
 
 export async function getItemTaxonomyOptions(contractId?: string | null) {
@@ -31,7 +77,7 @@ export async function getItemTaxonomyOptions(contractId?: string | null) {
         active: true,
         contractId: scope.contractId,
       },
-      orderBy: buildFamilyOrderBy(scope),
+      orderBy: [{ createdAt: "asc" }],
     }),
     prisma.itemSubfamily.findMany({
       where: {
@@ -44,7 +90,7 @@ export async function getItemTaxonomyOptions(contractId?: string | null) {
       include: {
         family: true,
       },
-      orderBy: [{ family: { wbs: "asc" } }, { wbs: "asc" }, { code: "asc" }],
+      orderBy: [{ createdAt: "asc" }],
     }),
     prisma.itemGroupCatalog.findMany({
       where: {
@@ -64,30 +110,66 @@ export async function getItemTaxonomyOptions(contractId?: string | null) {
           },
         },
       },
-      orderBy: [
-        { subfamily: { family: { wbs: "asc" } } },
-        { subfamily: { wbs: "asc" } },
-        { wbs: "asc" },
-        { code: "asc" },
-      ],
+      orderBy: [{ createdAt: "asc" }],
     }),
   ]);
 
+  const sortedFamilies = sortTaxonomyRows(families);
+  const sortedSubfamilies = [...subfamilies].sort((left, right) => {
+    const familyOrder = compareWbsLike(
+      left.family.wbs,
+      right.family.wbs,
+      left.family.name,
+      right.family.name,
+    );
+
+    if (familyOrder !== 0) {
+      return familyOrder;
+    }
+
+    return compareWbsLike(left.wbs, right.wbs, left.name, right.name);
+  });
+  const sortedGroups = [...groups].sort((left, right) => {
+    const familyOrder = compareWbsLike(
+      left.subfamily.family.wbs,
+      right.subfamily.family.wbs,
+      left.subfamily.family.name,
+      right.subfamily.family.name,
+    );
+
+    if (familyOrder !== 0) {
+      return familyOrder;
+    }
+
+    const subfamilyOrder = compareWbsLike(
+      left.subfamily.wbs,
+      right.subfamily.wbs,
+      left.subfamily.name,
+      right.subfamily.name,
+    );
+
+    if (subfamilyOrder !== 0) {
+      return subfamilyOrder;
+    }
+
+    return compareWbsLike(left.wbs, right.wbs, left.name, right.name);
+  });
+
   return {
     scope,
-    families: families.map((family: (typeof families)[number]) => ({
+    families: sortedFamilies.map((family: (typeof families)[number]) => ({
       id: family.id,
       name: family.name,
       wbs: family.wbs,
     })),
-    subfamilies: subfamilies.map((subfamily: (typeof subfamilies)[number]) => ({
+    subfamilies: sortedSubfamilies.map((subfamily: (typeof subfamilies)[number]) => ({
       id: subfamily.id,
       familyId: subfamily.familyId,
       name: subfamily.name,
       wbs: subfamily.wbs,
       familyName: subfamily.family.name,
     })),
-    groups: groups.map((group: (typeof groups)[number]) => ({
+    groups: sortedGroups.map((group: (typeof groups)[number]) => ({
       id: group.id,
       subfamilyId: group.subfamilyId,
       name: group.name,
@@ -102,20 +184,28 @@ export async function getItemTaxonomySnapshot(contractId?: string | null) {
   const prisma = getPrisma();
   const scope = await resolveItemTaxonomyScope(contractId);
 
-  return prisma.itemFamily.findMany({
+  const families = await prisma.itemFamily.findMany({
     where: {
       contractId: scope.contractId,
     },
-    orderBy: [{ wbs: "asc" }, { code: "asc" }],
+    orderBy: [{ createdAt: "asc" }],
     include: {
       subfamilies: {
-        orderBy: [{ wbs: "asc" }, { code: "asc" }],
+        orderBy: [{ createdAt: "asc" }],
         include: {
           groups: {
-            orderBy: [{ wbs: "asc" }, { code: "asc" }],
+            orderBy: [{ createdAt: "asc" }],
           },
         },
       },
     },
   });
+
+  return sortTaxonomyRows(families).map((family) => ({
+    ...family,
+    subfamilies: sortTaxonomyRows(family.subfamilies).map((subfamily) => ({
+      ...subfamily,
+      groups: sortTaxonomyRows(subfamily.groups),
+    })),
+  }));
 }

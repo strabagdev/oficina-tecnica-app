@@ -138,9 +138,9 @@ function ContractItemsTreeContent({
             <th className="px-4 py-3 font-medium">Descripcion</th>
             <th className="px-4 py-3 font-medium">Unidad</th>
             <th className="px-4 py-3 font-medium">Cantidad base</th>
-            <th className="px-4 py-3 font-medium">Precio unitario</th>
-            <th className="px-4 py-3 font-medium">Monto base</th>
-            <th className="px-4 py-3 font-medium">Consumido</th>
+            <th className="px-4 py-3 font-medium whitespace-nowrap">Precio unitario</th>
+            <th className="px-4 py-3 font-medium whitespace-nowrap">Monto base</th>
+            <th className="px-4 py-3 font-medium whitespace-nowrap">Consumido</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100 bg-white">
@@ -384,7 +384,7 @@ function GroupSection({
             indentLevel === "nested-group" ? "pl-14" : "pl-10"
           }`}
         >
-          {group.wbs || "Sin WBS"}{group.name ? ` · ${group.name}` : ""}
+          <HierarchyLabel wbs={group.wbs} name={group.name} />
         </td>
       </tr>
       {group.items.map((item) => (
@@ -426,8 +426,9 @@ function HierarchyToggleRow({
           onClick={onToggle}
           className="flex w-full items-center justify-between gap-4 text-left"
         >
-          <span className="text-xs font-semibold uppercase tracking-[0.16em]">
-            {collapsed ? "▸" : "▾"} {wbs || "Sin WBS"}{name ? ` · ${name}` : ""}
+          <span className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em]">
+            <span aria-hidden="true">{collapsed ? "▸" : "▾"}</span>
+            <HierarchyLabel wbs={wbs} name={name} />
           </span>
           <span className="rounded-full bg-white/80 px-3 py-1 text-[11px] font-medium tracking-normal text-slate-600">
             {itemCount} items
@@ -435,6 +436,37 @@ function HierarchyToggleRow({
         </button>
       </td>
     </tr>
+  );
+}
+
+function HierarchyLabel({ wbs, name }: { wbs: string | null; name: string | null }) {
+  return (
+    <span className="inline-flex min-w-0 items-center gap-2">
+      {wbs ? (
+        <span>{wbs}</span>
+      ) : (
+        <span
+          className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-slate-300 text-slate-400"
+          title="Sin WBS"
+        >
+          <span className="sr-only">Sin WBS</span>
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 16 16"
+            className="h-2.5 w-2.5"
+            fill="none"
+          >
+            <path
+              d="M4 8h8"
+              stroke="currentColor"
+              strokeLinecap="round"
+              strokeWidth="1.5"
+            />
+          </svg>
+        </span>
+      )}
+      {name ? <span>{wbs ? `· ${name}` : name}</span> : null}
+    </span>
   );
 }
 
@@ -458,9 +490,13 @@ function ItemDataRow({
       <td className="px-4 py-4 text-slate-600">{item.description}</td>
       <td className="px-4 py-4 text-slate-600">{item.unit}</td>
       <td className="px-4 py-4 text-slate-600">{item.originalQuantity}</td>
-      <td className="px-4 py-4 text-slate-600">{item.unitPrice}</td>
-      <td className="px-4 py-4 text-slate-600">{item.originalAmount}</td>
-      <td className="px-4 py-4 text-slate-600">
+      <td className="px-4 py-4 text-slate-600 whitespace-nowrap tabular-nums min-w-32">
+        {item.unitPrice}
+      </td>
+      <td className="px-4 py-4 text-slate-600 whitespace-nowrap tabular-nums min-w-32">
+        {item.originalAmount}
+      </td>
+      <td className="px-4 py-4 text-slate-600 whitespace-nowrap tabular-nums min-w-40">
         {item.consumedQuantity} / {item.consumedAmount}
       </td>
     </tr>

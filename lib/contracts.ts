@@ -1,11 +1,12 @@
 import "server-only";
 
-import { DiscountMode, Prisma } from "@prisma/client";
+import { DiscountMode, Prisma, UserRole } from "@prisma/client";
 import {
   formatCurrencyDisplay,
   formatDecimalDisplay,
 } from "@/lib/numeric";
 import { getPrisma } from "@/lib/prisma";
+import { resolveUserApprovalStatus } from "@/lib/user-approval-status";
 
 type ContractDetailRecord = Prisma.ContractGetPayload<{
   include: {
@@ -316,23 +317,29 @@ export async function getContractDetailSnapshot(contractId: string) {
 export async function getUserAdminSnapshot() {
   const prisma = getPrisma();
 
-  const users = await prisma.user.findMany({
-    orderBy: [
-      {
-        role: "asc",
-      },
-      {
-        name: "asc",
-      },
-    ],
-  });
+  const users = await prisma.$queryRaw<
+    {
+      id: string;
+      authUserId: string | null;
+      name: string;
+      email: string;
+      role: string;
+      approvalStatus: string;
+      active: boolean;
+    }[]
+  >`
+    select id, "authUserId", name, email, role::text, "approvalStatus"::text, active
+    from "User"
+    order by role asc, name asc
+  `;
 
   return users.map((user) => ({
     id: user.id,
     authUserId: user.authUserId,
     name: user.name,
     email: user.email,
-    role: user.role,
+    role: user.role as UserRole,
+    approvalStatus: resolveUserApprovalStatus(user.approvalStatus),
     active: user.active,
   }));
 }

@@ -8,6 +8,10 @@ import { requireAdmin } from "@/lib/auth";
 import { hashPassword } from "@/lib/password";
 import { getPrisma, prismaSupportsAuthUserId } from "@/lib/prisma";
 import { createSupabaseServiceClient } from "@/lib/supabase/service";
+import {
+  resolveUserApprovalStatus,
+  USER_APPROVAL_STATUS,
+} from "@/lib/user-approval-status";
 
 function buildRedirectUrl(type: "success" | "error", message: string) {
   const params = new URLSearchParams({
@@ -94,7 +98,7 @@ export async function manageUserAction(formData: FormData) {
 
       createdAuthUserId = createdAuthUser.user.id;
 
-      await prisma.user.create({
+      const createdUser = await prisma.user.create({
         data: {
           name,
           email,
@@ -104,6 +108,12 @@ export async function manageUserAction(formData: FormData) {
           ...(supportsAuthUserId && createdAuthUserId ? { authUserId: createdAuthUserId } : {}),
         },
       });
+
+      await prisma.$executeRaw`
+        update "User"
+        set "approvalStatus" = ${USER_APPROVAL_STATUS.APPROVED}
+        where id = ${createdUser.id}
+      `;
     } catch {
       if (createdAuthUserId) {
         await supabase.auth.admin.deleteUser(createdAuthUserId).catch(() => undefined);
@@ -155,6 +165,21 @@ export async function manageUserAction(formData: FormData) {
 
     revalidatePath("/admin/users");
     redirectWithMessage("success", "Rol actualizado.");
+  }
+
+  if (action === "update-approval-status") {
+    const approvalStatus = resolveUserApprovalStatus(
+      String(formData.get("approvalStatus") ?? USER_APPROVAL_STATUS.PENDING),
+    );
+
+    await prisma.$executeRaw`
+      update "User"
+      set "approvalStatus" = ${approvalStatus}
+      where id = ${userId}
+    `;
+
+    revalidatePath("/admin/users");
+    redirectWithMessage("success", "Estado de solicitud actualizado.");
   }
 
   if (action === "reset-password") {

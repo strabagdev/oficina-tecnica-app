@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { LoginForm } from "@/components/login-form";
-import { getCurrentUser, getLoginSetup } from "@/lib/auth";
+import { getCurrentUser } from "@/lib/auth";
 
 export const metadata: Metadata = {
   title: "Ingreso | Oficina Tecnica",
@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 
 export default async function LoginPage() {
-  const [user, setup] = await Promise.all([getCurrentUser(), getLoginSetup()]);
+  const user = await getCurrentUser();
 
   if (user) {
     redirect("/dashboard");
@@ -66,32 +66,13 @@ export default async function LoginPage() {
             <div className="mb-8 space-y-2">
               <h2 className="text-2xl font-semibold text-slate-950">Ingresar</h2>
               <p className="text-sm leading-6 text-slate-600">
-                Acceso con usuarios existentes en Supabase Auth. Los roles y el
-                nivel de acceso dentro del sistema se administran internamente.
+                Acceso con usuarios existentes en Supabase Auth. Las nuevas
+                solicitudes quedan pendientes hasta que un administrador apruebe
+                el acceso dentro del sistema.
               </p>
             </div>
 
             <LoginForm />
-
-            <div className="mt-8 space-y-4 rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-600">
-              <p className="font-medium text-slate-800">
-                {setup.bootstrapPending
-                  ? "Bootstrap inicial pendiente."
-                  : `Usuarios disponibles en el sistema: ${setup.userCount}.`}
-              </p>
-              {setup.bootstrapPending ? (
-                <p>
-                  Si el primer ingreso corresponde al correo definido en
-                  `ADMIN_EMAIL`, ese usuario de Supabase se vinculara como
-                  administrador interno.
-                </p>
-              ) : (
-                <p>
-                  Las nuevas cuentas se autentican por Supabase y los roles o
-                  bloqueos de acceso se administran desde el panel interno.
-                </p>
-              )}
-            </div>
           </div>
         </section>
       </div>

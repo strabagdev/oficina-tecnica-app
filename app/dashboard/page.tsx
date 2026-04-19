@@ -34,8 +34,6 @@ export default async function DashboardPage({
   const flashMessage = Array.isArray(resolvedSearchParams?.message)
     ? resolvedSearchParams?.message[0]
     : resolvedSearchParams?.message;
-  const latestClosure = snapshot.recentClosures[0] ?? null;
-  const latestContract = snapshot.contractOptions[0] ?? null;
 
   return (
     <AppShell
@@ -51,46 +49,6 @@ export default async function DashboardPage({
         <MetricCard label="Items cargados" value={snapshot.items} />
         <MetricCard label="Consumos mensuales" value={snapshot.consumptions} />
         <MetricCard label="Cierres mensuales" value={snapshot.closures} />
-      </section>
-
-      <section>
-        <article className="rounded-[2rem] border border-slate-200 bg-white p-7 shadow-[0_20px_50px_rgba(15,23,42,0.06)]">
-          <h2 className="text-2xl font-semibold text-slate-950">Estado actual</h2>
-          <div className="mt-6 grid gap-4 md:grid-cols-2">
-            <DataPill label="Usuarios" value={String(snapshot.users.length)} />
-            <DataPill label="NOC pendientes" value={String(snapshot.pendingChanges)} />
-            <DataPill
-              label="Ultimo cierre"
-              value={latestClosure ? latestClosure.periodLabel : "Sin cierres"}
-            />
-            <DataPill
-              label="Neto ultimo cierre"
-              value={latestClosure ? latestClosure.netAmount : "Sin cierres"}
-            />
-          </div>
-          <div className="mt-6 rounded-3xl bg-slate-50 p-5">
-            <p className="text-sm font-medium text-slate-700">Referencia actual</p>
-            {latestContract ? (
-              <div className="mt-3 space-y-2 text-sm leading-7 text-slate-600">
-                <p>
-                  Contrato mas reciente:{" "}
-                  <span className="font-medium text-slate-900">
-                    {latestContract.code} · {latestContract.name}
-                  </span>
-                </p>
-                <p>Mandante: {latestContract.clientName}</p>
-                <p>
-                  Estado: {latestContract.status} · {latestContract.itemCount} items ·{" "}
-                  {latestContract.closureCount} cierres
-                </p>
-              </div>
-            ) : (
-              <p className="mt-3 text-sm leading-7 text-slate-600">
-                Todavia no hay contratos reales cargados para resumir aqui.
-              </p>
-            )}
-          </div>
-        </article>
       </section>
 
       <section className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
@@ -182,15 +140,6 @@ function MetricCard({ label, value }: { label: string; value: number }) {
         {value}
       </p>
     </article>
-  );
-}
-
-function DataPill({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-3xl bg-slate-50 p-4">
-      <p className="text-xs uppercase tracking-[0.2em] text-slate-400">{label}</p>
-      <p className="mt-2 text-lg font-semibold text-slate-950">{value}</p>
-    </div>
   );
 }
 

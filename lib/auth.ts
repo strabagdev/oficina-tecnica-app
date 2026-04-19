@@ -7,7 +7,10 @@ import { UserRole } from "@prisma/client";
 import { getPrisma, prismaSupportsAuthUserId } from "@/lib/prisma";
 import { hashPassword } from "@/lib/password";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { USER_APPROVAL_STATUS } from "@/lib/user-approval-status";
+import {
+  isMissingApprovalStatusSchema,
+  USER_APPROVAL_STATUS,
+} from "@/lib/user-approval-status";
 
 type AuthSeedUser = {
   email: string;
@@ -35,6 +38,15 @@ export type LoginAttemptResult =
   | { status: "pending-approval" }
   | { status: "rejected" }
   | { status: "inactive" };
+
+const authUserSelect = {
+  id: true,
+  authUserId: true,
+  name: true,
+  email: true,
+  role: true,
+  active: true,
+};
 
 function getSeedUsers(): AuthSeedUser[] {
   const adminEmail = process.env.ADMIN_EMAIL?.trim();
@@ -69,11 +81,19 @@ function getAuthDisplayName(user: Pick<SupabaseUser, "email" | "user_metadata">)
 }
 
 async function getUserApprovalStatus(prisma: ReturnType<typeof getPrisma>, userId: string) {
-  const rows = await prisma.$queryRaw<{ approvalStatus: string }[]>`
-    select "approvalStatus" from "User" where id = ${userId}
-  `;
+  try {
+    const rows = await prisma.$queryRaw<{ approvalStatus: string }[]>`
+      select "approvalStatus" from "User" where id = ${userId}
+    `;
 
-  return rows[0]?.approvalStatus ?? USER_APPROVAL_STATUS.APPROVED;
+    return rows[0]?.approvalStatus ?? USER_APPROVAL_STATUS.APPROVED;
+  } catch (error) {
+    if (isMissingApprovalStatusSchema(error)) {
+      return USER_APPROVAL_STATUS.APPROVED;
+    }
+
+    throw error;
+  }
 }
 
 async function updateUserApprovalStatus(
@@ -81,20 +101,34 @@ async function updateUserApprovalStatus(
   userId: string,
   approvalStatus: string,
 ) {
-  await prisma.$executeRaw`
-    update "User" set "approvalStatus" = ${approvalStatus} where id = ${userId}
-  `;
+  try {
+    await prisma.$executeRaw`
+      update "User" set "approvalStatus" = ${approvalStatus} where id = ${userId}
+    `;
+  } catch (error) {
+    if (!isMissingApprovalStatusSchema(error)) {
+      throw error;
+    }
+  }
 }
 
 async function countUsersByApprovalStatus(
   prisma: ReturnType<typeof getPrisma>,
   approvalStatus: string,
 ) {
-  const rows = await prisma.$queryRaw<{ count: bigint }[]>`
-    select count(*)::bigint as count from "User" where "approvalStatus" = ${approvalStatus}::"UserApprovalStatus"
-  `;
+  try {
+    const rows = await prisma.$queryRaw<{ count: bigint }[]>`
+      select count(*)::bigint as count from "User" where "approvalStatus" = ${approvalStatus}::"UserApprovalStatus"
+    `;
 
-  return Number(rows[0]?.count ?? 0);
+    return Number(rows[0]?.count ?? 0);
+  } catch (error) {
+    if (isMissingApprovalStatusSchema(error)) {
+      return approvalStatus === USER_APPROVAL_STATUS.APPROVED ? prisma.user.count() : 0;
+    }
+
+    throw error;
+  }
 }
 
 export async function ensureBaseUsers() {
@@ -116,7 +150,6 @@ export async function ensureBaseUsers() {
       email: user.email.toLowerCase(),
       name: user.name,
       role: user.role,
-      approvalStatus: USER_APPROVAL_STATUS.APPROVED,
       passwordHash: buildPlaceholderPasswordHash(),
     })),
   });
@@ -159,6 +192,7 @@ async function syncInternalUser(authUser: SupabaseUser): Promise<SyncedUserResul
           ]
         : [{ email }],
     },
+    select: authUserSelect,
   });
 
   const displayName = getAuthDisplayName(authUser);
@@ -176,6 +210,7 @@ async function syncInternalUser(authUser: SupabaseUser): Promise<SyncedUserResul
             ? { authUserId: existingUser.authUserId ?? authUser.id }
             : {}),
         },
+        select: authUserSelect,
       })
     : await prisma.user.create({
         data: {
@@ -186,6 +221,7 @@ async function syncInternalUser(authUser: SupabaseUser): Promise<SyncedUserResul
           active: true,
           ...(supportsAuthUserId ? { authUserId: authUser.id } : {}),
         },
+        select: authUserSelect,
       });
   const approvalStatus = existingUser
     ? await getUserApprovalStatus(prisma, user.id)

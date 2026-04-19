@@ -9,6 +9,7 @@ import { hashPassword } from "@/lib/password";
 import { getPrisma, prismaSupportsAuthUserId } from "@/lib/prisma";
 import { createSupabaseServiceClient } from "@/lib/supabase/service";
 import {
+  isMissingApprovalStatusSchema,
   resolveUserApprovalStatus,
   USER_APPROVAL_STATUS,
 } from "@/lib/user-approval-status";
@@ -107,13 +108,22 @@ export async function manageUserAction(formData: FormData) {
           active: true,
           ...(supportsAuthUserId && createdAuthUserId ? { authUserId: createdAuthUserId } : {}),
         },
+        select: {
+          id: true,
+        },
       });
 
-      await prisma.$executeRaw`
-        update "User"
-        set "approvalStatus" = ${USER_APPROVAL_STATUS.APPROVED}
-        where id = ${createdUser.id}
-      `;
+      try {
+        await prisma.$executeRaw`
+          update "User"
+          set "approvalStatus" = ${USER_APPROVAL_STATUS.APPROVED}
+          where id = ${createdUser.id}
+        `;
+      } catch (error) {
+        if (!isMissingApprovalStatusSchema(error)) {
+          throw error;
+        }
+      }
     } catch {
       if (createdAuthUserId) {
         await supabase.auth.admin.deleteUser(createdAuthUserId).catch(() => undefined);
@@ -145,6 +155,9 @@ export async function manageUserAction(formData: FormData) {
       data: {
         active,
       },
+      select: {
+        id: true,
+      },
     });
 
     revalidatePath("/admin/users");
@@ -161,6 +174,9 @@ export async function manageUserAction(formData: FormData) {
       data: {
         role: role === UserRole.ADMIN ? UserRole.ADMIN : UserRole.VIEWER,
       },
+      select: {
+        id: true,
+      },
     });
 
     revalidatePath("/admin/users");
@@ -172,11 +188,17 @@ export async function manageUserAction(formData: FormData) {
       String(formData.get("approvalStatus") ?? USER_APPROVAL_STATUS.PENDING),
     );
 
-    await prisma.$executeRaw`
-      update "User"
-      set "approvalStatus" = ${approvalStatus}
-      where id = ${userId}
-    `;
+    try {
+      await prisma.$executeRaw`
+        update "User"
+        set "approvalStatus" = ${approvalStatus}
+        where id = ${userId}
+      `;
+    } catch (error) {
+      if (!isMissingApprovalStatusSchema(error)) {
+        throw error;
+      }
+    }
 
     revalidatePath("/admin/users");
     redirectWithMessage("success", "Estado de solicitud actualizado.");
@@ -192,6 +214,11 @@ export async function manageUserAction(formData: FormData) {
     const targetUser = await prisma.user.findUnique({
       where: {
         id: userId,
+      },
+      select: {
+        authUserId: true,
+        email: true,
+        name: true,
       },
     });
 
@@ -227,6 +254,9 @@ export async function manageUserAction(formData: FormData) {
           data: {
             authUserId,
           },
+          select: {
+            id: true,
+          },
         });
       }
     } else {
@@ -256,6 +286,9 @@ export async function manageUserAction(formData: FormData) {
           data: {
             authUserId,
           },
+          select: {
+            id: true,
+          },
         });
       }
     }
@@ -266,6 +299,9 @@ export async function manageUserAction(formData: FormData) {
       },
       data: {
         passwordHash: hashPassword(randomUUID()),
+      },
+      select: {
+        id: true,
       },
     });
 

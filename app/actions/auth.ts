@@ -7,7 +7,10 @@ import { deleteSession, loginWithPassword } from "@/lib/auth";
 import { hashPassword } from "@/lib/password";
 import { getPrisma, prismaSupportsAuthUserId } from "@/lib/prisma";
 import { createSupabaseServiceClient } from "@/lib/supabase/service";
-import { USER_APPROVAL_STATUS } from "@/lib/user-approval-status";
+import {
+  isMissingApprovalStatusSchema,
+  USER_APPROVAL_STATUS,
+} from "@/lib/user-approval-status";
 
 export type LoginActionState = {
   error?: string;
@@ -94,14 +97,27 @@ export async function requestAccessAction(
     where: {
       email,
     },
+    select: {
+      id: true,
+    },
   });
-  const existingApprovalStatus = existingUser
-    ? (
+  let existingApprovalStatus: string | null = null;
+
+  if (existingUser) {
+    try {
+      existingApprovalStatus = (
         await prisma.$queryRaw<{ approvalStatus: string }[]>`
           select "approvalStatus" from "User" where id = ${existingUser.id}
         `
-      )[0]?.approvalStatus
-    : null;
+      )[0]?.approvalStatus;
+    } catch (error) {
+      if (!isMissingApprovalStatusSchema(error)) {
+        throw error;
+      }
+
+      existingApprovalStatus = USER_APPROVAL_STATUS.APPROVED;
+    }
+  }
 
   if (existingUser) {
     if (existingApprovalStatus === USER_APPROVAL_STATUS.PENDING) {
@@ -150,13 +166,22 @@ export async function requestAccessAction(
         active: true,
         ...(supportsAuthUserId ? { authUserId: createdAuthUserId } : {}),
       },
+      select: {
+        id: true,
+      },
     });
 
-    await prisma.$executeRaw`
-      update "User"
-      set "approvalStatus" = ${USER_APPROVAL_STATUS.PENDING}
-      where id = ${createdUser.id}
-    `;
+    try {
+      await prisma.$executeRaw`
+        update "User"
+        set "approvalStatus" = ${USER_APPROVAL_STATUS.PENDING}
+        where id = ${createdUser.id}
+      `;
+    } catch (error) {
+      if (!isMissingApprovalStatusSchema(error)) {
+        throw error;
+      }
+    }
   } catch {
     if (createdAuthUserId) {
       await supabase.auth.admin.deleteUser(createdAuthUserId).catch(() => undefined);

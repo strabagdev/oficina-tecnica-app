@@ -6,6 +6,7 @@ import { hashPassword } from "@/lib/password";
 import { getPrisma, prismaSupportsAuthUserId } from "@/lib/prisma";
 import { createSupabaseServiceClient } from "@/lib/supabase/service";
 import {
+  isMissingApprovalStatusSchema,
   resolveUserApprovalStatus,
   USER_APPROVAL_STATUS,
 } from "@/lib/user-approval-status";
@@ -113,13 +114,22 @@ export async function POST(request: Request) {
           active: true,
           ...(supportsAuthUserId && createdAuthUserId ? { authUserId: createdAuthUserId } : {}),
         },
+        select: {
+          id: true,
+        },
       });
 
-      await prisma.$executeRaw`
-        update "User"
-        set "approvalStatus" = ${USER_APPROVAL_STATUS.APPROVED}
-        where id = ${createdUser.id}
-      `;
+      try {
+        await prisma.$executeRaw`
+          update "User"
+          set "approvalStatus" = ${USER_APPROVAL_STATUS.APPROVED}
+          where id = ${createdUser.id}
+        `;
+      } catch (error) {
+        if (!isMissingApprovalStatusSchema(error)) {
+          throw error;
+        }
+      }
     } catch {
       if (createdAuthUserId) {
         await supabase.auth.admin.deleteUser(createdAuthUserId).catch(() => undefined);
@@ -150,6 +160,9 @@ export async function POST(request: Request) {
       data: {
         active,
       },
+      select: {
+        id: true,
+      },
     });
 
     return redirectWithMessage(
@@ -169,6 +182,9 @@ export async function POST(request: Request) {
       data: {
         role: role === UserRole.ADMIN ? UserRole.ADMIN : UserRole.VIEWER,
       },
+      select: {
+        id: true,
+      },
     });
 
     return redirectWithMessage(rerouteRequest, "success", "Rol+actualizado.");
@@ -179,11 +195,17 @@ export async function POST(request: Request) {
       String(formData.get("approvalStatus") ?? USER_APPROVAL_STATUS.PENDING),
     );
 
-    await prisma.$executeRaw`
-      update "User"
-      set "approvalStatus" = ${approvalStatus}
-      where id = ${userId}
-    `;
+    try {
+      await prisma.$executeRaw`
+        update "User"
+        set "approvalStatus" = ${approvalStatus}
+        where id = ${userId}
+      `;
+    } catch (error) {
+      if (!isMissingApprovalStatusSchema(error)) {
+        throw error;
+      }
+    }
 
     return redirectWithMessage(
       rerouteRequest,
@@ -202,6 +224,11 @@ export async function POST(request: Request) {
     const targetUser = await prisma.user.findUnique({
       where: {
         id: userId,
+      },
+      select: {
+        authUserId: true,
+        email: true,
+        name: true,
       },
     });
 
@@ -245,6 +272,9 @@ export async function POST(request: Request) {
           data: {
             authUserId,
           },
+          select: {
+            id: true,
+          },
         });
       }
     } else {
@@ -275,6 +305,9 @@ export async function POST(request: Request) {
           data: {
             authUserId,
           },
+          select: {
+            id: true,
+          },
         });
       }
     }
@@ -285,6 +318,9 @@ export async function POST(request: Request) {
       },
       data: {
         passwordHash: hashPassword(randomUUID()),
+      },
+      select: {
+        id: true,
       },
     });
 

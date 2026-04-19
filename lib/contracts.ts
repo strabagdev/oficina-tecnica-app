@@ -6,7 +6,11 @@ import {
   formatDecimalDisplay,
 } from "@/lib/numeric";
 import { getPrisma } from "@/lib/prisma";
-import { resolveUserApprovalStatus } from "@/lib/user-approval-status";
+import {
+  isMissingApprovalStatusSchema,
+  resolveUserApprovalStatus,
+  USER_APPROVAL_STATUS,
+} from "@/lib/user-approval-status";
 
 type ContractDetailRecord = Prisma.ContractGetPayload<{
   include: {
@@ -317,21 +321,40 @@ export async function getContractDetailSnapshot(contractId: string) {
 export async function getUserAdminSnapshot() {
   const prisma = getPrisma();
 
-  const users = await prisma.$queryRaw<
-    {
-      id: string;
-      authUserId: string | null;
-      name: string;
-      email: string;
-      role: string;
-      approvalStatus: string;
-      active: boolean;
-    }[]
-  >`
-    select id, "authUserId", name, email, role::text, "approvalStatus"::text, active
-    from "User"
-    order by role asc, name asc
-  `;
+  let users: {
+    id: string;
+    authUserId: string | null;
+    name: string;
+    email: string;
+    role: string;
+    approvalStatus: string;
+    active: boolean;
+  }[];
+
+  try {
+    users = await prisma.$queryRaw<typeof users>`
+      select id, "authUserId", name, email, role::text, "approvalStatus"::text, active
+      from "User"
+      order by role asc, name asc
+    `;
+  } catch (error) {
+    if (!isMissingApprovalStatusSchema(error)) {
+      throw error;
+    }
+
+    const usersWithoutApprovalStatus = await prisma.$queryRaw<
+      Omit<(typeof users)[number], "approvalStatus">[]
+    >`
+      select id, "authUserId", name, email, role::text, active
+      from "User"
+      order by role asc, name asc
+    `;
+
+    users = usersWithoutApprovalStatus.map((user) => ({
+      ...user,
+      approvalStatus: USER_APPROVAL_STATUS.APPROVED,
+    }));
+  }
 
   return users.map((user) => ({
     id: user.id,

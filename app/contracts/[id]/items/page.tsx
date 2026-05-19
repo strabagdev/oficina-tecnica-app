@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { UserRole } from "@prisma/client";
+import { Prisma, UserRole } from "@prisma/client";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { ContractItemsAdminClient } from "@/components/contract-items-admin-client";
@@ -11,6 +11,7 @@ import { requireUser } from "@/lib/auth";
 import { getContractDetailSnapshot } from "@/lib/contracts";
 import { getItemTaxonomyOptions } from "@/lib/item-taxonomy";
 import { getMeasurementUnitSnapshot } from "@/lib/measurement-units";
+import { formatCurrencyDisplay, formatDecimalDisplay } from "@/lib/numeric";
 
 export const metadata: Metadata = {
   title: "Partidas del contrato | Oficina Tecnica",
@@ -23,6 +24,22 @@ type ItemTaxonomyData = {
   families: { id: string; name: string; wbs?: string | null }[];
   subfamilies: { id: string; familyId: string; name: string; wbs?: string | null }[];
   groups: { id: string; familyId: string; subfamilyId: string; name: string; wbs?: string | null }[];
+};
+
+type TreeTotals = {
+  contractAmount: string;
+  consumedQuantity: string;
+  consumedAmount: string;
+  remainingQuantity: string;
+  remainingAmount: string;
+};
+
+type NumericTreeTotals = {
+  contractAmount: Prisma.Decimal;
+  consumedQuantity: Prisma.Decimal;
+  consumedAmount: Prisma.Decimal;
+  remainingQuantity: Prisma.Decimal;
+  remainingAmount: Prisma.Decimal;
 };
 
 function resolveItemHierarchy(
@@ -69,6 +86,7 @@ type TreeGroup = {
   key: string;
   wbs: string | null;
   name: string | null;
+  totals: TreeTotals;
   items: {
     id: string;
     itemNumber: string;
@@ -77,8 +95,18 @@ type TreeGroup = {
     originalQuantity: string;
     unitPrice: string;
     originalAmount: string;
+    originalAmountValue: string;
+    currentQuantity: string;
+    currentAmount: string;
+    currentAmountValue: string;
     consumedQuantity: string;
     consumedAmount: string;
+    consumedQuantityValue: string;
+    consumedAmountValue: string;
+    remainingQuantity: string;
+    remainingAmount: string;
+    remainingQuantityValue: string;
+    remainingAmountValue: string;
   }[];
 };
 
@@ -86,6 +114,7 @@ type TreeSubfamily = {
   key: string;
   wbs: string | null;
   name: string | null;
+  totals: TreeTotals;
   items: TreeGroup["items"];
   groups: TreeGroup[];
 };
@@ -94,12 +123,104 @@ type TreeFamily = {
   key: string;
   wbs: string | null;
   name: string | null;
+  totals: TreeTotals;
   items: TreeGroup["items"];
   groups: TreeGroup[];
   subfamilies: TreeSubfamily[];
 };
 
 type ContractSnapshot = NonNullable<Awaited<ReturnType<typeof getContractDetailSnapshot>>>;
+
+function createEmptyNumericTotals(): NumericTreeTotals {
+  return {
+    contractAmount: new Prisma.Decimal(0),
+    consumedQuantity: new Prisma.Decimal(0),
+    consumedAmount: new Prisma.Decimal(0),
+    remainingQuantity: new Prisma.Decimal(0),
+    remainingAmount: new Prisma.Decimal(0),
+  };
+}
+
+function addItemToTotals(
+  totals: NumericTreeTotals,
+  item: TreeGroup["items"][number],
+) {
+  totals.contractAmount = totals.contractAmount.add(item.currentAmountValue);
+  totals.consumedQuantity = totals.consumedQuantity.add(item.consumedQuantityValue);
+  totals.consumedAmount = totals.consumedAmount.add(item.consumedAmountValue);
+  totals.remainingQuantity = totals.remainingQuantity.add(item.remainingQuantityValue);
+  totals.remainingAmount = totals.remainingAmount.add(item.remainingAmountValue);
+}
+
+function addTotals(target: NumericTreeTotals, source: NumericTreeTotals) {
+  target.contractAmount = target.contractAmount.add(source.contractAmount);
+  target.consumedQuantity = target.consumedQuantity.add(source.consumedQuantity);
+  target.consumedAmount = target.consumedAmount.add(source.consumedAmount);
+  target.remainingQuantity = target.remainingQuantity.add(source.remainingQuantity);
+  target.remainingAmount = target.remainingAmount.add(source.remainingAmount);
+}
+
+function formatTreeTotals(totals: NumericTreeTotals): TreeTotals {
+  return {
+    contractAmount: formatCurrencyDisplay(totals.contractAmount),
+    consumedQuantity: formatDecimalDisplay(totals.consumedQuantity, {
+      scale: 3,
+      trimTrailingZeros: true,
+    }),
+    consumedAmount: formatCurrencyDisplay(totals.consumedAmount),
+    remainingQuantity: formatDecimalDisplay(totals.remainingQuantity, {
+      scale: 3,
+      trimTrailingZeros: true,
+    }),
+    remainingAmount: formatCurrencyDisplay(totals.remainingAmount),
+  };
+}
+
+function calculateGroupTotals(group: TreeGroup): NumericTreeTotals {
+  const totals = createEmptyNumericTotals();
+
+  for (const item of group.items) {
+    addItemToTotals(totals, item);
+  }
+
+  group.totals = formatTreeTotals(totals);
+
+  return totals;
+}
+
+function calculateSubfamilyTotals(subfamily: TreeSubfamily): NumericTreeTotals {
+  const totals = createEmptyNumericTotals();
+
+  for (const item of subfamily.items) {
+    addItemToTotals(totals, item);
+  }
+
+  for (const group of subfamily.groups) {
+    addTotals(totals, calculateGroupTotals(group));
+  }
+
+  subfamily.totals = formatTreeTotals(totals);
+
+  return totals;
+}
+
+function calculateFamilyTotals(family: TreeFamily) {
+  const totals = createEmptyNumericTotals();
+
+  for (const item of family.items) {
+    addItemToTotals(totals, item);
+  }
+
+  for (const group of family.groups) {
+    addTotals(totals, calculateGroupTotals(group));
+  }
+
+  for (const subfamily of family.subfamilies) {
+    addTotals(totals, calculateSubfamilyTotals(subfamily));
+  }
+
+  family.totals = formatTreeTotals(totals);
+}
 
 function buildItemTree(
   items: ContractSnapshot["items"],
@@ -117,6 +238,7 @@ function buildItemTree(
         key: familyKey,
         wbs: hierarchy.familyWbs,
         name: hierarchy.familyName,
+        totals: formatTreeTotals(createEmptyNumericTotals()),
         items: [],
         groups: [],
         subfamilies: [],
@@ -129,11 +251,21 @@ function buildItemTree(
       itemNumber: item.itemNumber,
       description: item.description,
       unit: item.unit,
-      originalQuantity: item.originalQuantity,
+      originalQuantity: item.currentQuantity,
       unitPrice: item.unitPrice,
-      originalAmount: item.originalAmount,
+      originalAmount: item.currentAmount,
+      originalAmountValue: item.currentAmountValue,
+      currentQuantity: item.currentQuantity,
+      currentAmount: item.currentAmount,
+      currentAmountValue: item.currentAmountValue,
       consumedQuantity: item.consumedQuantity,
       consumedAmount: item.consumedAmount,
+      consumedQuantityValue: item.consumedQuantityValue,
+      consumedAmountValue: item.consumedAmountValue,
+      remainingQuantity: item.remainingQuantity,
+      remainingAmount: item.remainingAmount,
+      remainingQuantityValue: item.remainingQuantityValue,
+      remainingAmountValue: item.remainingAmountValue,
     };
 
     if (!hierarchy.subfamilyKey) {
@@ -145,6 +277,7 @@ function buildItemTree(
             key: hierarchy.groupKey,
             wbs: hierarchy.groupWbs,
             name: hierarchy.groupName,
+            totals: formatTreeTotals(createEmptyNumericTotals()),
             items: [],
           };
           family.groups.push(group);
@@ -165,6 +298,7 @@ function buildItemTree(
         key: hierarchy.subfamilyKey,
         wbs: hierarchy.subfamilyWbs,
         name: hierarchy.subfamilyName,
+        totals: formatTreeTotals(createEmptyNumericTotals()),
         items: [],
         groups: [],
       };
@@ -179,6 +313,7 @@ function buildItemTree(
           key: hierarchy.groupKey,
           wbs: hierarchy.groupWbs,
           name: hierarchy.groupName,
+          totals: formatTreeTotals(createEmptyNumericTotals()),
           items: [],
         };
         subfamily.groups.push(group);
@@ -190,7 +325,13 @@ function buildItemTree(
     }
   }
 
-  return Array.from(familyMap.values());
+  const families = Array.from(familyMap.values());
+
+  for (const family of families) {
+    calculateFamilyTotals(family);
+  }
+
+  return families;
 }
 
 export default async function ContractItemsPage({

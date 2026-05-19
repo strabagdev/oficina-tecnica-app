@@ -3,7 +3,14 @@ import Link from "next/link";
 import { UserRole } from "@prisma/client";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
-import { ContractNav } from "@/components/contract-nav";
+import {
+  ContractHeader,
+  ContractKpiStrip,
+  ContractShell,
+  EmptyState,
+  StatusBadge,
+  TextLinkButton,
+} from "@/components/contract-workspace";
 import { requireUser } from "@/lib/auth";
 import { getContractDetailSnapshot } from "@/lib/contracts";
 
@@ -31,162 +38,201 @@ export default async function ContractDetailPage({
     contract.startDateValue,
     contract.endDateValue,
   );
+  const latestClosure = contract.closures[0] ?? null;
 
   return (
     <AppShell
       user={user}
       pathname={`/contracts/${id}`}
       title={`${contract.code} · ${contract.name}`}
-      description="Detalle general del contrato, con acceso a partidas, cierres y cambios contractuales."
-      actions={
-        <div className="flex flex-wrap gap-2">
-          {user.role === UserRole.ADMIN ? (
-            <Link
-              href={`/contracts/${id}/edit`}
-              className="rounded-full bg-white px-5 py-2.5 text-sm font-medium text-slate-950 transition hover:bg-slate-100"
-            >
-              Editar cabecera
-            </Link>
-          ) : null}
-          <Link
-            href={`/contracts/${id}/closures`}
-            className="rounded-full border border-white/20 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-white/10"
-          >
-            Ver cierres
-          </Link>
-        </div>
-      }
+      description="Centro operativo para revisar itemizado, estados de pago, NOC y futuras proyecciones del contrato."
     >
-      <ContractNav contractId={id} active="overview" userRole={user.role} />
-
-      <section>
-        <article className="rounded-[2rem] border border-slate-200 bg-white p-7 shadow-[0_20px_50px_rgba(15,23,42,0.06)]">
-          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-            <h2 className="text-2xl font-semibold text-slate-950">Resumen contractual</h2>
+      <ContractShell
+        contractId={id}
+        active="overview"
+        userRole={user.role}
+        header={
+          <ContractHeader
+            code={contract.code}
+            name={contract.name}
+            clientName={contract.clientName}
+            status={contract.status}
+            meta={
+              <>
+                <span>{contract.currency}</span>
+                <span>{contractDuration}</span>
+              </>
+            }
+          />
+        }
+        actions={
+          <>
+            <TextLinkButton href={`/contracts/${id}/items`}>Ver itemizado</TextLinkButton>
+            <TextLinkButton href={`/contracts/${id}/closures`} variant="secondary">
+              Registrar EDP
+            </TextLinkButton>
+            <TextLinkButton href={`/contracts/${id}/changes`} variant="secondary">
+              Ver NOC
+            </TextLinkButton>
+            <TextLinkButton href="#" variant="disabled">
+              Forecast proximamente
+            </TextLinkButton>
             {user.role === UserRole.ADMIN ? (
-              <Link
-                href={`/contracts/${id}/edit`}
-                className="rounded-full border border-slate-300 px-5 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-900 hover:text-slate-950"
-              >
-                Editar cabecera
-              </Link>
+              <TextLinkButton href={`/contracts/${id}/edit`} variant="secondary">
+                Editar
+              </TextLinkButton>
             ) : null}
-          </div>
-          <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <DataPill label="Mandante" value={contract.clientName} />
-            <DataPill label="Estado" value={contract.status} />
-            <DataPill label="Moneda" value={contract.currency} />
-            <DataPill label="Monto contractual" value={contract.originalAmount} />
-            <DataPill label="Duracion del contrato" value={contractDuration} />
-          </div>
-          {contract.description ? (
-            <p className="mt-6 text-sm leading-7 text-slate-600">
-              {contract.description}
-            </p>
-          ) : null}
-        </article>
-      </section>
+          </>
+        }
+      >
+        <ContractKpiStrip
+          items={[
+            {
+              label: "Monto original",
+              value: contract.originalAmount,
+              helper: "Monto contractual base",
+              tone: "slate",
+            },
+            {
+              label: "NOC aplicadas",
+              value: contract.appliedChangeAmount,
+              helper: "Variacion contractual",
+              tone: "teal",
+            },
+            {
+              label: "Monto vigente",
+              value: contract.currentAmount,
+              helper: `${contract.itemCount} partidas vigentes`,
+              tone: "sky",
+            },
+            {
+              label: "Saldo vigente",
+              value: contract.remainingAmount,
+              helper: latestClosure
+                ? `Ultimo EDP ${latestClosure.periodLabel}`
+                : "Sin EDP registrado",
+              tone: "amber",
+            },
+          ]}
+        />
 
-      <section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-        <article className="rounded-[2rem] border border-slate-200 bg-white p-7 shadow-[0_20px_50px_rgba(15,23,42,0.06)]">
-          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-            <div>
-              <h2 className="text-2xl font-semibold text-slate-950">
-                Resumen operativo
-              </h2>
-              <p className="mt-2 text-sm leading-7 text-slate-600">
-                Desde aqui ya puedes saltar al itemizado completo, a los cierres mensuales o al registro de NOC.
-              </p>
-            </div>
-            <Link
-              href={`/contracts/${id}/items`}
-              className="rounded-full border border-slate-300 px-5 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-900 hover:text-slate-950"
-            >
-              Ver partidas
-            </Link>
-          </div>
-          <div className="mt-6 grid gap-4 md:grid-cols-2">
-            {contract.items.length > 0 ? (
-              contract.items.slice(0, 4).map((item: typeof contract.items[number]) => (
-                <div key={item.id} className="rounded-3xl bg-slate-50 p-5">
-                  <p className="text-sm font-medium text-teal-700">
-                    Item {item.itemNumber}
-                  </p>
-                  <p className="mt-2 font-semibold text-slate-950">{item.description}</p>
-                  <p className="mt-2 text-sm text-slate-600">
-                    {item.originalQuantity} {item.unit} · {item.originalAmount}
-                  </p>
-                  <p className="mt-1 text-sm text-slate-500">
-                    Consumido: {item.consumedQuantity} / {item.consumedAmount}
-                  </p>
-                </div>
-              ))
-            ) : (
-              <div className="rounded-3xl bg-slate-50 p-5 md:col-span-2">
-                <p className="font-semibold text-slate-950">Itemizado pendiente</p>
-                <p className="mt-2 text-sm leading-7 text-slate-600">
-                  La cabecera del contrato ya esta creada. El siguiente paso es entrar al modulo de partidas para cargar el itemizado base.
+        <section className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+          <article className="rounded-[1.5rem] border border-slate-200 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.05)]">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-950">Itemizado operativo</h3>
+                <p className="mt-1 text-sm text-slate-600">
+                  Partidas base con consumido y saldo calculados desde EDP.
                 </p>
               </div>
-            )}
-          </div>
-        </article>
-
-        <aside className="space-y-6">
-          <article className="rounded-[2rem] border border-slate-200 bg-white p-7 shadow-[0_20px_50px_rgba(15,23,42,0.06)]">
-            <h2 className="text-xl font-semibold text-slate-950">Ultimos cierres</h2>
-            <div className="mt-4 space-y-3">
-              {contract.closures.length > 0 ? (
-                contract.closures.map((closure: typeof contract.closures[number]) => (
-                  <div key={closure.id} className="rounded-3xl bg-slate-50 p-4">
-                    <p className="font-medium text-slate-950">
-                      {closure.periodLabel} · {closure.statementNumber}
-                    </p>
-                    <p className="mt-2 text-sm text-slate-600">
-                      Bruto {closure.grossAmount}
-                    </p>
-                    <p className="text-sm text-slate-600">
-                      Descuentos {closure.totalDiscounts}
-                    </p>
-                    <p className="text-sm text-slate-600">Neto {closure.netAmount}</p>
+              <TextLinkButton href={`/contracts/${id}/items`} variant="secondary">
+                Abrir
+              </TextLinkButton>
+            </div>
+            <div className="mt-4 divide-y divide-slate-100">
+              {contract.items.length > 0 ? (
+                contract.items.slice(0, 5).map((item: typeof contract.items[number]) => (
+                  <div
+                    key={item.id}
+                    className="grid gap-2 py-3 text-sm md:grid-cols-[minmax(0,1fr)_auto]"
+                  >
+                    <div className="min-w-0">
+                      <p className="font-medium text-slate-950">
+                        {item.itemNumber} · {item.description}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {item.currentQuantity} {item.unit ?? ""} · {item.currentAmount}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2 md:justify-end">
+                      <StatusBadge label={`Consumido ${item.consumedAmount}`} tone="teal" />
+                      <StatusBadge label={`Saldo ${item.remainingAmount}`} tone="sky" />
+                    </div>
                   </div>
                 ))
               ) : (
-                <EmptyText text="Aun no hay cierres para este contrato." />
+                <EmptyState
+                  title="Itemizado pendiente"
+                  text="Carga partidas para comenzar a registrar EDP y consumos mensuales."
+                  action={
+                    <TextLinkButton href={`/contracts/${id}/items`}>
+                      Cargar itemizado
+                    </TextLinkButton>
+                  }
+                />
               )}
             </div>
           </article>
 
-          <article className="rounded-[2rem] border border-slate-200 bg-white p-7 shadow-[0_20px_50px_rgba(15,23,42,0.06)]">
-            <h2 className="text-xl font-semibold text-slate-950">NOC recientes</h2>
-            <div className="mt-4 space-y-3">
-              {contract.changes.length > 0 ? (
-                contract.changes.map((change: typeof contract.changes[number]) => (
-                  <div key={change.id} className="rounded-3xl bg-slate-50 p-4">
-                    <p className="font-medium text-slate-950">{change.title}</p>
-                    <p className="mt-1 text-sm text-slate-600">
-                      {change.type} · {change.status}
-                    </p>
-                    <p className="text-sm text-slate-500">{change.effectiveDate}</p>
-                  </div>
-                ))
-              ) : (
-                <EmptyText text="Aun no hay cambios contractuales cargados." />
-              )}
-            </div>
-          </article>
-        </aside>
-      </section>
+          <aside className="grid gap-4">
+            <article className="rounded-[1.5rem] border border-slate-200 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.05)]">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-lg font-semibold text-slate-950">Ultimos EDP</h3>
+                <TextLinkButton href={`/contracts/${id}/closures`} variant="secondary">
+                  Ver todos
+                </TextLinkButton>
+              </div>
+              <div className="mt-4 space-y-3">
+                {contract.closures.length > 0 ? (
+                  contract.closures.slice(0, 3).map((closure: typeof contract.closures[number]) => (
+                    <Link
+                      key={closure.id}
+                      href={`/contracts/${id}/closures/${closure.id}`}
+                      className="block rounded-[1rem] border border-slate-100 bg-slate-50 px-4 py-3 transition hover:border-slate-300 hover:bg-white"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="font-medium text-slate-950">
+                          {closure.periodLabel} · {closure.statementNumber}
+                        </p>
+                        <StatusBadge
+                          label={closure.canEdit ? "editable" : "bloqueado"}
+                          tone={closure.canEdit ? "teal" : "amber"}
+                        />
+                      </div>
+                      <p className="mt-2 text-sm text-slate-600">Neto {closure.netAmount}</p>
+                    </Link>
+                  ))
+                ) : (
+                  <EmptyState
+                    title="Sin EDP"
+                    text="Cuando registres estados de pago, apareceran aqui."
+                  />
+                )}
+              </div>
+            </article>
+
+            <article className="rounded-[1.5rem] border border-slate-200 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.05)]">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-lg font-semibold text-slate-950">NOC recientes</h3>
+                <TextLinkButton href={`/contracts/${id}/changes`} variant="secondary">
+                  Ver NOC
+                </TextLinkButton>
+              </div>
+              <div className="mt-4 space-y-3">
+                {contract.changes.length > 0 ? (
+                  contract.changes.slice(0, 3).map((change: typeof contract.changes[number]) => (
+                    <div key={change.id} className="rounded-[1rem] bg-slate-50 px-4 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="font-medium text-slate-950">{change.title}</p>
+                        <StatusBadge label={change.status} tone="amber" />
+                      </div>
+                      <p className="mt-1 text-sm text-slate-600">
+                        {change.type} · {change.effectiveDate}
+                      </p>
+                    </div>
+                  ))
+                ) : (
+                  <EmptyState
+                    title="Sin NOC"
+                    text="Las modificaciones contractuales apareceran aqui cuando se carguen."
+                  />
+                )}
+              </div>
+            </article>
+          </aside>
+        </section>
+      </ContractShell>
     </AppShell>
-  );
-}
-
-function DataPill({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-3xl bg-slate-50 p-4">
-      <p className="text-xs uppercase tracking-[0.2em] text-slate-400">{label}</p>
-      <p className="mt-2 text-lg font-semibold text-slate-950">{value}</p>
-    </div>
   );
 }
 
@@ -232,8 +278,4 @@ function formatContractDuration(startDateValue: string, endDateValue: string) {
   const monthLabel = months === 1 ? "1 mes" : `${months} meses`;
   const dayLabel = days === 1 ? "1 dia" : `${days} dias`;
   return `${monthLabel} y ${dayLabel}`;
-}
-
-function EmptyText({ text }: { text: string }) {
-  return <p className="text-sm leading-7 text-slate-500">{text}</p>;
 }

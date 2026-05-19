@@ -1,6 +1,6 @@
 import "server-only";
 
-import { DiscountMode, Prisma, UserRole } from "@prisma/client";
+import { ChangeStatus, DiscountMode, Prisma, UserRole } from "@prisma/client";
 import {
   formatCurrencyDisplay,
   formatDecimalDisplay,
@@ -16,7 +16,11 @@ type ContractDetailRecord = Prisma.ContractGetPayload<{
   include: {
     items: true;
     monthlyClosures: true;
-    changes: true;
+    changes: {
+      include: {
+        lines: true;
+      };
+    };
   };
 }>;
 
@@ -95,11 +99,16 @@ function compareItemNumbers(left: string | null | undefined, right: string | nul
 function formatDiscount(
   mode: DiscountMode,
   percent: Prisma.Decimal | null,
+  amount: Prisma.Decimal | null,
   quantity: Prisma.Decimal | null,
   unit: string | null,
 ) {
   if (mode === DiscountMode.PERCENTAGE && percent) {
     return `${formatQuantity(percent)} %`;
+  }
+
+  if (mode === DiscountMode.AMOUNT && amount) {
+    return formatCurrency(amount);
   }
 
   if (mode === DiscountMode.QUANTITY && quantity) {
@@ -211,6 +220,13 @@ export async function getContractDetailSnapshot(contractId: string) {
           createdAt: "desc",
         },
         take: 10,
+        include: {
+          lines: {
+            orderBy: {
+              createdAt: "asc",
+            },
+          },
+        },
       },
     },
   });
@@ -261,6 +277,24 @@ export async function getContractDetailSnapshot(contractId: string) {
     );
   }
 
+  const appliedChangesAggregate = await prisma.contractChange.aggregate({
+    where: {
+      contractId,
+      status: ChangeStatus.APPLIED,
+    },
+    _sum: {
+      amountDelta: true,
+    },
+  });
+  const appliedChangeAmount =
+    appliedChangesAggregate._sum.amountDelta ?? new Prisma.Decimal(0);
+  const currentContractAmount = contract.originalAmount.add(appliedChangeAmount);
+  const consumedContractAmount = Array.from(consumedAmountByItem.values()).reduce(
+    (total, value) => total.add(value),
+    new Prisma.Decimal(0),
+  );
+  const remainingContractAmount = currentContractAmount.sub(consumedContractAmount);
+
   return {
     id: contract.id,
     code: contract.code,
@@ -274,46 +308,95 @@ export async function getContractDetailSnapshot(contractId: string) {
     startDateValue: formatDateForInput(contract.startDate),
     endDateValue: formatDateForInput(contract.endDate),
     originalAmount: formatCurrency(contract.originalAmount),
+    appliedChangeAmount: formatCurrency(appliedChangeAmount),
+    currentAmount: formatCurrency(currentContractAmount),
+    consumedAmount: formatCurrency(consumedContractAmount),
+    remainingAmount: formatCurrency(remainingContractAmount),
     itemCount: sortedItems.length,
     closureCount: contract.monthlyClosures.length,
-    items: sortedItems.map((item: ContractDetailRecord["items"][number]) => ({
-      id: item.id,
-      family: item.family,
-      subfamily: item.subfamily,
-      itemGroup: item.itemGroup,
-      itemNumber: item.itemNumber,
-      itemCode: item.itemCode,
-      itemNumberValue: item.itemNumber,
-      itemCodeValue: item.itemCode,
-      description: item.description,
-      unit: item.unit,
-      originalQuantityValue: item.originalQuantity.toFixed(3).replace(/\.?0+$/, ""),
-      unitPriceValue: item.unitPrice.toFixed(2).replace(/\.?0+$/, ""),
-      originalQuantity: formatQuantity(item.originalQuantity),
-      unitPrice: formatCurrency(item.unitPrice),
-      originalAmount: formatCurrency(item.originalAmount),
-      consumedQuantity: formatQuantity(
-        consumedQuantityByItem.get(item.id) ?? new Prisma.Decimal(0),
-      ),
-      consumedAmount: formatCurrency(
-        consumedAmountByItem.get(item.id) ?? new Prisma.Decimal(0),
-      ),
-    })),
+    items: sortedItems.map((item: ContractDetailRecord["items"][number]) => {
+      const currentQuantity = item.currentQuantity ?? item.originalQuantity;
+      const currentAmount = item.currentAmount ?? item.originalAmount;
+      const consumedQuantity = consumedQuantityByItem.get(item.id) ?? new Prisma.Decimal(0);
+      const consumedAmount = consumedAmountByItem.get(item.id) ?? new Prisma.Decimal(0);
+      const remainingQuantity = currentQuantity.sub(consumedQuantity);
+      const remainingAmount = currentAmount.sub(consumedAmount);
+
+      return {
+        id: item.id,
+        family: item.family,
+        subfamily: item.subfamily,
+        itemGroup: item.itemGroup,
+        itemNumber: item.itemNumber,
+        itemCode: item.itemCode,
+        itemNumberValue: item.itemNumber,
+        itemCodeValue: item.itemCode,
+        description: item.description,
+        unit: item.unit,
+        originalQuantityValue: item.originalQuantity.toFixed(3).replace(/\.?0+$/, ""),
+        unitPriceValue: item.unitPrice.toFixed(2).replace(/\.?0+$/, ""),
+        originalAmountValue: item.originalAmount.toFixed(2),
+        currentQuantityValue: currentQuantity.toFixed(3).replace(/\.?0+$/, ""),
+        currentAmountValue: currentAmount.toFixed(2),
+        consumedQuantityValue: consumedQuantity.toFixed(3),
+        consumedAmountValue: consumedAmount.toFixed(2),
+        remainingQuantityValue: remainingQuantity.toFixed(3),
+        remainingAmountValue: remainingAmount.toFixed(2),
+        originalQuantity: formatQuantity(item.originalQuantity),
+        unitPrice: formatCurrency(item.unitPrice),
+        originalAmount: formatCurrency(item.originalAmount),
+        currentQuantity: formatQuantity(currentQuantity),
+        currentAmount: formatCurrency(currentAmount),
+        consumedQuantity: formatQuantity(consumedQuantity),
+        consumedAmount: formatCurrency(consumedAmount),
+        remainingQuantity: formatQuantity(remainingQuantity),
+        remainingAmount: formatCurrency(remainingAmount),
+      };
+    }),
     closures: contract.monthlyClosures.map(
-      (closure: ContractDetailRecord["monthlyClosures"][number]) => ({
+      (closure: ContractDetailRecord["monthlyClosures"][number], index: number) => ({
       id: closure.id,
+      year: closure.year,
+      month: closure.month,
       periodLabel: `${String(closure.month).padStart(2, "0")}/${closure.year}`,
       statementNumber: closure.statementNumber ?? "Sin numero",
       grossAmount: formatCurrency(closure.grossAmount),
       totalDiscounts: formatCurrency(closure.totalDiscounts),
       netAmount: formatCurrency(closure.netAmount),
+      canEdit: index === 0,
+      canDelete: index === 0,
     })),
     changes: contract.changes.map((change: ContractDetailRecord["changes"][number]) => ({
       id: change.id,
       title: change.title,
+      description: change.description,
       type: change.type,
       status: change.status,
+      quantityDelta: change.quantityDelta ? formatQuantity(change.quantityDelta) : "",
+      amountDelta: change.amountDelta ? formatCurrency(change.amountDelta) : "",
       effectiveDate: new Intl.DateTimeFormat("es-CL").format(change.effectiveDate),
+      approvedAt: change.approvedAt
+        ? new Intl.DateTimeFormat("es-CL").format(change.approvedAt)
+        : "",
+      rejectedAt: change.rejectedAt
+        ? new Intl.DateTimeFormat("es-CL").format(change.rejectedAt)
+        : "",
+      appliedAt: change.appliedAt
+        ? new Intl.DateTimeFormat("es-CL").format(change.appliedAt)
+        : "",
+      lines: change.lines.map((line) => ({
+        id: line.id,
+        createsNewItem: line.createsNewItem,
+        itemNumber: line.itemNumber,
+        description: line.description,
+        unit: line.unit,
+        quantityDelta: line.quantityDelta ? formatQuantity(line.quantityDelta) : "",
+        amountDelta: formatCurrency(line.amountDelta),
+        beforeQuantity: line.beforeQuantity ? formatQuantity(line.beforeQuantity) : "",
+        beforeAmount: line.beforeAmount ? formatCurrency(line.beforeAmount) : "",
+        afterQuantity: line.afterQuantity ? formatQuantity(line.afterQuantity) : "",
+        afterAmount: line.afterAmount ? formatCurrency(line.afterAmount) : "",
+      })),
     })),
   };
 }
@@ -323,7 +406,6 @@ export async function getUserAdminSnapshot() {
 
   let users: {
     id: string;
-    authUserId: string | null;
     name: string;
     email: string;
     role: string;
@@ -333,7 +415,7 @@ export async function getUserAdminSnapshot() {
 
   try {
     users = await prisma.$queryRaw<typeof users>`
-      select id, "authUserId", name, email, role::text, "approvalStatus"::text, active
+      select id, name, email, role::text, "approvalStatus"::text, active
       from "User"
       order by role asc, name asc
     `;
@@ -345,7 +427,7 @@ export async function getUserAdminSnapshot() {
     const usersWithoutApprovalStatus = await prisma.$queryRaw<
       Omit<(typeof users)[number], "approvalStatus">[]
     >`
-      select id, "authUserId", name, email, role::text, active
+      select id, name, email, role::text, active
       from "User"
       order by role asc, name asc
     `;
@@ -358,7 +440,6 @@ export async function getUserAdminSnapshot() {
 
   return users.map((user) => ({
     id: user.id,
-    authUserId: user.authUserId,
     name: user.name,
     email: user.email,
     role: user.role as UserRole,
@@ -419,6 +500,7 @@ export async function getRecentClosures() {
         discountDisplay: formatDiscount(
           item.discountMode,
           item.discountPercent,
+          item.discountAmount,
           item.discountQuantity,
           item.unit,
         ),
@@ -426,4 +508,158 @@ export async function getRecentClosures() {
       }),
     ),
   }));
+}
+
+export async function getMonthlyClosureDetailSnapshot(
+  contractId: string,
+  closureId: string,
+) {
+  const prisma = getPrisma();
+
+  const closure = await prisma.monthlyClosure.findFirst({
+    where: {
+      id: closureId,
+      contractId,
+    },
+    include: {
+      contract: {
+        select: {
+          code: true,
+          name: true,
+          currency: true,
+        },
+      },
+      itemSnapshots: {
+        orderBy: [{ itemNumber: "asc" }, { itemCode: "asc" }],
+      },
+    },
+  });
+
+  if (!closure) {
+    return null;
+  }
+
+  const newerClosureExists = await prisma.monthlyClosure.findFirst({
+    where: {
+      contractId,
+      OR: [
+        {
+          year: {
+            gt: closure.year,
+          },
+        },
+        {
+          year: closure.year,
+          month: {
+            gt: closure.month,
+          },
+        },
+      ],
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  return {
+    id: closure.id,
+    contractId: closure.contractId,
+    contractCode: closure.contract.code,
+    contractName: closure.contract.name,
+    currency: closure.contract.currency,
+    year: closure.year,
+    month: closure.month,
+    periodLabel: `${String(closure.month).padStart(2, "0")}/${closure.year}`,
+    statementNumber: closure.statementNumber ?? "Sin numero",
+    summaryNote: closure.summaryNote?.trim() ?? "",
+    canEdit: !newerClosureExists,
+    closedAtLabel: new Intl.DateTimeFormat("es-CL", {
+      dateStyle: "long",
+      timeStyle: "short",
+    }).format(closure.closedAt),
+    grossAmount: formatCurrency(closure.grossAmount),
+    totalDiscounts: formatCurrency(closure.totalDiscounts),
+    netAmount: formatCurrency(closure.netAmount),
+    lines: closure.itemSnapshots.map((item) => ({
+      id: item.id,
+      itemNumber: item.itemNumber,
+      itemCode: item.itemCode,
+      description: item.description,
+      unit: item.unit,
+      contractQuantity: formatQuantity(item.contractQuantity),
+      contractAmount: formatCurrency(item.contractAmount),
+      consumedToDateQuantity: formatQuantity(item.consumedToDateQuantity),
+      consumedToDateAmount: formatCurrency(item.consumedToDateAmount),
+      monthQuantity: formatQuantity(item.monthQuantity),
+      monthGrossAmount: formatCurrency(item.monthGrossAmount),
+      discountDisplay: formatDiscount(
+        item.discountMode,
+        item.discountPercent,
+        item.discountAmount,
+        item.discountQuantity,
+        item.unit,
+      ),
+      netPayableQuantity: formatQuantity(item.netPayableQuantity),
+      netPayableAmount: formatCurrency(item.netPayableAmount),
+    })),
+  };
+}
+
+export async function getMonthlyClosureEditSnapshot(
+  contractId: string,
+  closureId: string,
+) {
+  const prisma = getPrisma();
+  const closure = await prisma.monthlyClosure.findFirst({
+    where: { id: closureId, contractId },
+    include: {
+      itemSnapshots: {
+        orderBy: [{ itemNumber: "asc" }, { itemCode: "asc" }],
+      },
+    },
+  });
+
+  if (!closure) {
+    return null;
+  }
+
+  const notesByItemId = new Map(
+    (
+      await prisma.monthlyConsumption.findMany({
+        where: {
+          year: closure.year,
+          month: closure.month,
+          contractItemId: {
+            in: closure.itemSnapshots.map((item) => item.contractItemId),
+          },
+        },
+        select: {
+          contractItemId: true,
+          note: true,
+        },
+      })
+    ).map((consumption) => [consumption.contractItemId, consumption.note] as const),
+  );
+
+  return {
+    closureId: closure.id,
+    year: closure.year,
+    month: closure.month,
+    statementNumber: closure.statementNumber ?? "",
+    summaryNote: closure.summaryNote ?? "",
+    rows: closure.itemSnapshots.map((item) => ({
+      contractItemId: item.contractItemId,
+      monthQty: item.monthQuantity.toFixed(3).replace(/\.?0+$/, ""),
+      discountMode: item.discountMode,
+      discountValue:
+        item.discountMode === DiscountMode.PERCENTAGE
+          ? (item.discountPercent?.toFixed(4).replace(/\.?0+$/, "") ?? "")
+          : item.discountMode === DiscountMode.AMOUNT
+            ? (item.discountAmount?.toFixed(2).replace(/\.?0+$/, "") ?? "")
+          : item.discountMode === DiscountMode.QUANTITY
+            ? (item.discountQuantity?.toFixed(3).replace(/\.?0+$/, "") ?? "")
+            : "0",
+      note: item.note ?? notesByItemId.get(item.contractItemId) ?? "",
+    })),
+  };
 }

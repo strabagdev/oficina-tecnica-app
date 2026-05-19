@@ -34,11 +34,13 @@ enum ChangeStatus {
   PENDING
   APPROVED
   REJECTED
+  APPLIED
 }
 
 enum DiscountMode {
   NONE
   PERCENTAGE
+  AMOUNT
   QUANTITY
 }
 
@@ -158,11 +160,14 @@ model ContractItem {
   originalQuantity  Decimal              @db.Decimal(18, 3)
   unitPrice         Decimal              @db.Decimal(18, 2)
   originalAmount    Decimal              @db.Decimal(18, 2)
+  currentQuantity   Decimal?             @db.Decimal(18, 3)
+  currentAmount     Decimal?             @db.Decimal(18, 2)
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
   contract          Contract             @relation(fields: [contractId], references: [id], onDelete: Cascade)
   consumptions      MonthlyConsumption[]
   changes           ContractChange[]
+  changeLines       ContractChangeLine[]
   closureSnapshots  MonthlyClosureItemSnapshot[]
 
   @@unique([contractId, itemNumber])
@@ -232,6 +237,7 @@ model MonthlyClosureItemSnapshot {
   discountAmount          Decimal?        @db.Decimal(18, 2)
   netPayableQuantity      Decimal?        @db.Decimal(18, 3)
   netPayableAmount        Decimal?        @db.Decimal(18, 2)
+  note                    String?
   createdAt               DateTime        @default(now())
   updatedAt               DateTime        @updatedAt
   monthlyClosure          MonthlyClosure  @relation(fields: [monthlyClosureId], references: [id], onDelete: Cascade)
@@ -252,12 +258,45 @@ model ContractChange {
   quantityDelta Decimal?      @db.Decimal(18, 3)
   amountDelta   Decimal?      @db.Decimal(18, 2)
   effectiveDate DateTime
+  approvedAt    DateTime?
+  rejectedAt    DateTime?
+  appliedAt     DateTime?
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
   contract      Contract      @relation(fields: [contractId], references: [id], onDelete: Cascade)
   contractItem   ContractItem? @relation(fields: [contractItemId], references: [id], onDelete: SetNull)
+  lines         ContractChangeLine[]
 
   @@index([contractId])
   @@index([contractItemId])
   @@index([status])
+}
+
+model ContractChangeLine {
+  id                    String          @id @default(cuid())
+  contractChangeId      String
+  contractItemId        String?
+  createsNewItem        Boolean         @default(false)
+  family                String?
+  subfamily             String?
+  itemGroup             String?
+  itemNumber            String
+  itemCode              String
+  description           String
+  unit                  String?
+  quantityDelta         Decimal?        @db.Decimal(18, 3)
+  amountDelta           Decimal         @db.Decimal(18, 2)
+  unitPrice             Decimal?        @db.Decimal(18, 2)
+  beforeQuantity        Decimal?        @db.Decimal(18, 3)
+  beforeAmount          Decimal?        @db.Decimal(18, 2)
+  afterQuantity         Decimal?        @db.Decimal(18, 3)
+  afterAmount           Decimal?        @db.Decimal(18, 2)
+  appliedAt             DateTime?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+  contractChange        ContractChange  @relation(fields: [contractChangeId], references: [id], onDelete: Cascade)
+  contractItem          ContractItem?   @relation(fields: [contractItemId], references: [id], onDelete: SetNull)
+
+  @@index([contractChangeId])
+  @@index([contractItemId])
 }

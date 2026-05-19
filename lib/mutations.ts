@@ -1,23 +1,11 @@
 import "server-only";
 
-import { ContractStatus, DiscountMode, Prisma } from "@prisma/client";
+import { ChangeStatus, ChangeType, ContractStatus, DiscountMode, Prisma } from "@prisma/client";
 import * as XLSX from "xlsx";
 import { getItemTaxonomyOptions } from "@/lib/item-taxonomy";
 import { parseDecimalInput } from "@/lib/numeric";
 import { getPrisma } from "@/lib/prisma";
 import { getMeasurementUnitOptions } from "@/lib/measurement-units";
-
-type ParsedItemLine = {
-  family: string;
-  subfamily: string;
-  itemGroup: string;
-  itemNumber: string;
-  itemCode: string;
-  description: string;
-  unit: string;
-  quantity: string;
-  unitPrice: string;
-};
 
 type ParsedClosureLine = {
   itemCode: string;
@@ -26,14 +14,6 @@ type ParsedClosureLine = {
   discountValue: string;
   note: string;
 };
-
-type ParsedItemsResult =
-  | {
-      error: string;
-    }
-  | {
-      items: ParsedItemLine[];
-    };
 
 type ParsedClosureRowsResult =
   | {
@@ -83,6 +63,7 @@ type ClosureSnapshotMutationRow = {
   discountAmount: Prisma.Decimal;
   netPayableQuantity: Prisma.Decimal;
   netPayableAmount: Prisma.Decimal;
+  note: string | null;
 };
 
 type ContractItemCreateRow = {
@@ -97,6 +78,8 @@ type ContractItemCreateRow = {
   originalQuantity: Prisma.Decimal;
   unitPrice: Prisma.Decimal;
   originalAmount: Prisma.Decimal;
+  currentQuantity: Prisma.Decimal;
+  currentAmount: Prisma.Decimal;
 };
 
 type ContractItemUpdateRow = {
@@ -111,6 +94,8 @@ type ContractItemUpdateRow = {
   originalQuantity: Prisma.Decimal;
   unitPrice: Prisma.Decimal;
   originalAmount: Prisma.Decimal;
+  currentQuantity: Prisma.Decimal;
+  currentAmount: Prisma.Decimal;
 };
 
 type NormalizedItemInput = {
@@ -157,50 +142,173 @@ type ContractItemImportValidationResult =
       itemCount: number;
     };
 
+type ParsedContractChangeLine =
+  | {
+      createsNewItem: false;
+      itemNumber: string;
+      quantityDelta: Prisma.Decimal | null;
+      amountDelta: Prisma.Decimal;
+      description: string;
+    }
+  | {
+      createsNewItem: true;
+      itemNumber: string;
+      description: string;
+      unit: string;
+      quantityDelta: Prisma.Decimal;
+      unitPrice: Prisma.Decimal;
+      amountDelta: Prisma.Decimal;
+    };
+
 function parseDecimal(value: string) {
   return parseDecimalInput(value);
 }
 
-function parseItemLines(source: string): ParsedItemsResult {
-  const lines = source
+function parseOptionalDecimal(value: string) {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  return parseDecimal(trimmed);
+}
+
+function resolveChangeType(quantityDelta: Prisma.Decimal, amountDelta: Prisma.Decimal) {
+  const hasQuantity = !quantityDelta.isZero();
+  const hasAmount = !amountDelta.isZero();
+
+  if (hasQuantity && hasAmount) {
+    return ChangeType.MIXED;
+  }
+
+  if (hasQuantity) {
+    return ChangeType.QUANTITY;
+  }
+
+  return ChangeType.AMOUNT;
+}
+
+function parseContractChangeLines(source: string): { error: string } | { lines: ParsedContractChangeLine[] } {
+  const rawLines = source
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
 
-  const items: ParsedItemLine[] = [];
-
-  for (const line of lines) {
-    const [family, subfamily, itemGroup, itemNumber, description, unit, quantity, unitPrice] = line
-      .split("|")
-      .map((part) => part.trim());
-
-    if (!itemNumber || !description || !unit || !quantity || !unitPrice) {
-      return {
-        error:
-          "Cada item debe venir como familia|subfamilia|grupo|numeroItem|descripcion|unidad|cantidad|precioUnitario.",
-      };
-    }
-
-    items.push({
-      family: family ?? "",
-      subfamily: subfamily ?? "",
-      itemGroup: itemGroup ?? "",
-      itemNumber,
-      itemCode: itemNumber,
-      description,
-      unit,
-      quantity,
-      unitPrice,
-    });
-  }
-
-  if (items.length === 0) {
+  if (rawLines.length === 0) {
     return {
-      error: "Ingresa al menos un item para crear el contrato.",
+      error: "Agrega al menos una linea de impacto para la NOC.",
     };
   }
 
-  return { items };
+  const lines: ParsedContractChangeLine[] = [];
+
+  for (const [index, rawLine] of rawLines.entries()) {
+    const rowNumber = index + 1;
+    const parts = rawLine.split("|").map((part) => part.trim());
+    const mode = parts[0]?.toUpperCase();
+
+    if (mode === "EXISTENTE") {
+      const [, itemNumber = "", quantityDeltaRaw = "", amountDeltaRaw = "", description = ""] = parts;
+
+      if (!itemNumber) {
+        return {
+          error: `La linea ${rowNumber} debe indicar numero de item existente.`,
+        };
+      }
+
+      const quantityDelta = parseOptionalDecimal(quantityDeltaRaw);
+
+      if (quantityDeltaRaw && !quantityDelta) {
+        return {
+          error: `No pude interpretar la cantidad delta de la linea ${rowNumber}.`,
+        };
+      }
+
+      const amountDelta = parseOptionalDecimal(amountDeltaRaw);
+
+      if (amountDeltaRaw && !amountDelta) {
+        return {
+          error: `No pude interpretar el monto delta de la linea ${rowNumber}.`,
+        };
+      }
+
+      lines.push({
+        createsNewItem: false,
+        itemNumber,
+        quantityDelta,
+        amountDelta: amountDelta ?? new Prisma.Decimal(0),
+        description,
+      });
+      continue;
+    }
+
+    if (mode === "NUEVO") {
+      const [
+        ,
+        itemNumber = "",
+        description = "",
+        unit = "",
+        quantityRaw = "",
+        unitPriceRaw = "",
+        amountRaw = "",
+      ] = parts;
+
+      if (!itemNumber || !description || !unit || !quantityRaw || !unitPriceRaw) {
+        return {
+          error:
+            `La linea ${rowNumber} debe venir como NUEVO|numero|descripcion|unidad|cantidad|precioUnitario|montoOpcional.`,
+        };
+      }
+
+      const quantityDelta = parseDecimal(quantityRaw);
+      const unitPrice = parseDecimal(unitPriceRaw);
+
+      if (!quantityDelta || !unitPrice) {
+        return {
+          error: `No pude interpretar cantidad o precio unitario de la linea ${rowNumber}.`,
+        };
+      }
+
+      if (quantityDelta.lessThanOrEqualTo(0)) {
+        return {
+          error: `La cantidad de una partida nueva debe ser mayor a cero en la linea ${rowNumber}.`,
+        };
+      }
+
+      const amountDelta = amountRaw ? parseDecimal(amountRaw) : quantityDelta.mul(unitPrice);
+
+      if (!amountDelta) {
+        return {
+          error: `No pude interpretar el monto de la linea ${rowNumber}.`,
+        };
+      }
+
+      if (amountDelta.lessThanOrEqualTo(0)) {
+        return {
+          error: `El monto de una partida nueva debe ser mayor a cero en la linea ${rowNumber}.`,
+        };
+      }
+
+      lines.push({
+        createsNewItem: true,
+        itemNumber,
+        description,
+        unit,
+        quantityDelta,
+        unitPrice,
+        amountDelta,
+      });
+      continue;
+    }
+
+    return {
+      error:
+        `La linea ${rowNumber} debe comenzar con EXISTENTE o NUEVO.`,
+    };
+  }
+
+  return { lines };
 }
 
 function getTextCell(record: Record<string, unknown>, keys: string[]) {
@@ -281,6 +389,8 @@ function buildCreateRow(
     originalQuantity: item.quantity,
     unitPrice: item.unitPrice,
     originalAmount: item.originalAmount,
+    currentQuantity: item.quantity,
+    currentAmount: item.originalAmount,
   };
 }
 
@@ -300,6 +410,8 @@ function buildUpdateRow(
     originalQuantity: item.quantity,
     unitPrice: item.unitPrice,
     originalAmount: item.originalAmount,
+    currentQuantity: item.quantity,
+    currentAmount: item.originalAmount,
   };
 }
 
@@ -804,8 +916,10 @@ function parseClosureLines(source: string): ParsedClosureRowsResult {
     const discountMode =
       discountModeRaw?.toUpperCase() === DiscountMode.PERCENTAGE
         ? DiscountMode.PERCENTAGE
-        : discountModeRaw?.toUpperCase() === DiscountMode.QUANTITY
-          ? DiscountMode.QUANTITY
+        : discountModeRaw?.toUpperCase() === DiscountMode.AMOUNT
+          ? DiscountMode.AMOUNT
+          : discountModeRaw?.toUpperCase() === DiscountMode.QUANTITY
+            ? DiscountMode.QUANTITY
           : DiscountMode.NONE;
 
     rows.push({
@@ -821,6 +935,66 @@ function parseClosureLines(source: string): ParsedClosureRowsResult {
     return {
       error: "Ingresa al menos una linea de cierre.",
     };
+  }
+
+  return { rows };
+}
+
+function parseClosureRowsFromJson(source: string): ParsedClosureRowsResult {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(source);
+  } catch {
+    return {
+      error: "El formato de lineas del cierre no es JSON valido.",
+    };
+  }
+
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    return {
+      error: "Debe haber al menos una partida con cantidad del mes en el cierre.",
+    };
+  }
+
+  const rows: ParsedClosureLine[] = [];
+
+  for (const entry of parsed) {
+    if (!entry || typeof entry !== "object") {
+      return {
+        error: "Cada linea del cierre debe ser un objeto con codigo y cantidad.",
+      };
+    }
+
+    const record = entry as Record<string, unknown>;
+    const itemCode = String(record.itemCode ?? "").trim();
+    const quantityConsumed = String(record.quantityConsumed ?? "").trim();
+    const discountModeRaw = String(record.discountMode ?? "").trim();
+    const discountValue = String(record.discountValue ?? "").trim();
+    const note = String(record.note ?? "").trim();
+
+    if (!itemCode || !quantityConsumed) {
+      return {
+        error: "Cada linea debe incluir itemCode y quantityConsumed.",
+      };
+    }
+
+    const discountMode =
+      discountModeRaw.toUpperCase() === DiscountMode.PERCENTAGE
+        ? DiscountMode.PERCENTAGE
+        : discountModeRaw.toUpperCase() === DiscountMode.AMOUNT
+          ? DiscountMode.AMOUNT
+          : discountModeRaw.toUpperCase() === DiscountMode.QUANTITY
+            ? DiscountMode.QUANTITY
+          : DiscountMode.NONE;
+
+    rows.push({
+      itemCode,
+      quantityConsumed,
+      discountMode,
+      discountValue,
+      note,
+    });
   }
 
   return { rows };
@@ -1083,6 +1257,27 @@ export async function updateContractItemFromForm(
 
   try {
     await prisma.$transaction(async (tx) => {
+      const existingItem = await tx.contractItem.findUnique({
+        where: {
+          id: itemId,
+        },
+        select: {
+          originalQuantity: true,
+          originalAmount: true,
+          currentQuantity: true,
+          currentAmount: true,
+        },
+      });
+
+      if (!existingItem) {
+        throw new Error("No encontre la partida a actualizar.");
+      }
+
+      const quantityChangeDelta = (existingItem.currentQuantity ?? existingItem.originalQuantity)
+        .sub(existingItem.originalQuantity);
+      const amountChangeDelta = (existingItem.currentAmount ?? existingItem.originalAmount)
+        .sub(existingItem.originalAmount);
+
       await tx.contractItem.update({
         where: {
           id: itemId,
@@ -1098,6 +1293,8 @@ export async function updateContractItemFromForm(
           originalQuantity: normalized.item.quantity,
           unitPrice: normalized.item.unitPrice,
           originalAmount: normalized.item.originalAmount,
+          currentQuantity: normalized.item.quantity.add(quantityChangeDelta),
+          currentAmount: normalized.item.originalAmount.add(amountChangeDelta),
         },
       });
 
@@ -1140,6 +1337,27 @@ export async function importContractItemsFromFile(
         });
       } else {
         for (const row of validatedImport.updateRows) {
+          const existingItem = await tx.contractItem.findUnique({
+            where: {
+              id: row.id,
+            },
+            select: {
+              originalQuantity: true,
+              originalAmount: true,
+              currentQuantity: true,
+              currentAmount: true,
+            },
+          });
+
+          if (!existingItem) {
+            throw new Error("No encontre una partida del archivo para actualizar.");
+          }
+
+          const quantityChangeDelta = (existingItem.currentQuantity ?? existingItem.originalQuantity)
+            .sub(existingItem.originalQuantity);
+          const amountChangeDelta = (existingItem.currentAmount ?? existingItem.originalAmount)
+            .sub(existingItem.originalAmount);
+
           await tx.contractItem.update({
             where: {
               id: row.id,
@@ -1155,6 +1373,8 @@ export async function importContractItemsFromFile(
               originalQuantity: row.originalQuantity,
               unitPrice: row.unitPrice,
               originalAmount: row.originalAmount,
+              currentQuantity: row.originalQuantity.add(quantityChangeDelta),
+              currentAmount: row.originalAmount.add(amountChangeDelta),
             },
           });
         }
@@ -1191,11 +1411,16 @@ export async function createMonthlyClosureFromForm(
   formData: FormData,
 ): Promise<MutationResult> {
   const contractId = String(formData.get("contractId") ?? "").trim();
+  const closureId = String(formData.get("closureId") ?? "").trim();
   const year = Number(String(formData.get("year") ?? ""));
   const month = Number(String(formData.get("month") ?? ""));
   const statementNumber = String(formData.get("statementNumber") ?? "").trim();
   const summaryNote = String(formData.get("summaryNote") ?? "").trim();
   const rowsSource = String(formData.get("rows") ?? "");
+  const inputMode = String(formData.get("closureInputMode") ?? "text").trim();
+  const rowsJsonRaw = String(formData.get("closureRowsJson") ?? "").trim();
+  const useGrid = inputMode === "grid";
+  const isReplacement = Boolean(closureId);
 
   if (!contractId || !year || !month) {
     return {
@@ -1203,7 +1428,9 @@ export async function createMonthlyClosureFromForm(
     };
   }
 
-  const parsedRows = parseClosureLines(rowsSource);
+  const parsedRows = useGrid
+    ? parseClosureRowsFromJson(rowsJsonRaw)
+    : parseClosureLines(rowsSource);
 
   if ("error" in parsedRows) {
     return { error: parsedRows.error };
@@ -1232,6 +1459,117 @@ export async function createMonthlyClosureFromForm(
     };
   }
 
+  const closureToReplace = isReplacement
+    ? await prisma.monthlyClosure.findFirst({
+        where: {
+          id: closureId,
+          contractId,
+        },
+        select: {
+          id: true,
+          year: true,
+          month: true,
+        },
+      })
+    : null;
+
+  if (isReplacement) {
+    if (!closureToReplace) {
+      return {
+        error: "No pude identificar el EDP que intentas reemplazar. Refresca la pagina e intenta nuevamente.",
+      };
+    }
+  }
+
+  const targetClosure = await prisma.monthlyClosure.findFirst({
+    where: {
+      contractId,
+      year,
+      month,
+    },
+    select: {
+      id: true,
+      year: true,
+      month: true,
+    },
+  });
+
+  if (isReplacement && targetClosure && targetClosure.id !== closureId) {
+    return {
+      error: "Ya existe otro EDP registrado para el periodo seleccionado.",
+    };
+  }
+
+  if (isReplacement) {
+    const newerThanTargetExists = await prisma.monthlyClosure.findFirst({
+      where: {
+        contractId,
+        id: {
+          not: closureId,
+        },
+        OR: [
+          {
+            year: {
+              gt: year,
+            },
+          },
+          {
+            year,
+            month: {
+              gt: month,
+            },
+          },
+        ],
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (newerThanTargetExists) {
+      return {
+        error:
+          "No puedes mover este EDP a un periodo anterior porque existe un EDP posterior al periodo seleccionado.",
+      };
+    }
+  }
+
+  const referenceClosure = closureToReplace ?? targetClosure;
+
+  if (referenceClosure) {
+    const newerClosureExists = await prisma.monthlyClosure.findFirst({
+      where: {
+        contractId,
+        id: {
+          not: referenceClosure.id,
+        },
+        OR: [
+          {
+            year: {
+              gt: referenceClosure.year,
+            },
+          },
+          {
+            year: referenceClosure.year,
+            month: {
+              gt: referenceClosure.month,
+            },
+          },
+        ],
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (newerClosureExists) {
+      return {
+        error:
+          "No puedes reemplazar este EDP porque existe un EDP posterior. El cierre quedo como historico.",
+      };
+    }
+  }
+
   const itemMap = new Map(
     contract.items.flatMap((item) => [
       [item.itemNumber, item] as const,
@@ -1243,6 +1581,7 @@ export async function createMonthlyClosureFromForm(
   let grossAmount = new Prisma.Decimal(0);
   let totalDiscounts = new Prisma.Decimal(0);
   let netAmount = new Prisma.Decimal(0);
+  const seenClosureItemIds = new Set<string>();
 
   for (const row of parsedRows.rows) {
     const contractItem = itemMap.get(row.itemCode);
@@ -1252,6 +1591,14 @@ export async function createMonthlyClosureFromForm(
         error: `El item ${row.itemCode} no pertenece al contrato seleccionado.`,
       };
     }
+
+    if (seenClosureItemIds.has(contractItem.id)) {
+      return {
+        error: `La partida ${contractItem.itemNumber} (${contractItem.itemCode}) esta repetida en el cierre.`,
+      };
+    }
+
+    seenClosureItemIds.add(contractItem.id);
 
     const quantityConsumed = parseDecimal(row.quantityConsumed);
 
@@ -1279,6 +1626,20 @@ export async function createMonthlyClosureFromForm(
       discountAmount = monthGrossAmount.mul(discountPercent).div(100);
     }
 
+    if (row.discountMode === DiscountMode.AMOUNT && row.discountValue) {
+      const parsedDiscountAmount = parseDecimal(row.discountValue);
+
+      if (!parsedDiscountAmount) {
+        return {
+          error: `No pude interpretar el monto de descuento del item ${row.itemCode}.`,
+        };
+      }
+
+      discountAmount = parsedDiscountAmount.greaterThan(monthGrossAmount)
+        ? monthGrossAmount
+        : parsedDiscountAmount;
+    }
+
     if (row.discountMode === DiscountMode.QUANTITY && row.discountValue) {
       discountQuantity = parseDecimal(row.discountValue);
 
@@ -1299,15 +1660,41 @@ export async function createMonthlyClosureFromForm(
     const payableAmount = monthGrossAmount.sub(discountAmount).lessThan(0)
       ? new Prisma.Decimal(0)
       : monthGrossAmount.sub(discountAmount);
+    const contractQuantity = contractItem.currentQuantity ?? contractItem.originalQuantity;
+    const contractAmount = contractItem.currentAmount ?? contractItem.originalAmount;
 
-    const consumedToDateQuantity = contractItem.consumptions.reduce(
+    const previousConsumptions = contractItem.consumptions.filter((consumption) => {
+      const isTargetPeriod = consumption.year === year && consumption.month === month;
+      const isOriginalReplacementPeriod =
+        closureToReplace &&
+        consumption.year === closureToReplace.year &&
+        consumption.month === closureToReplace.month;
+
+      return !isTargetPeriod && !isOriginalReplacementPeriod;
+    });
+    const consumedToDateQuantity = previousConsumptions.reduce(
       (accumulator, consumption) => accumulator.add(consumption.quantityConsumed),
       new Prisma.Decimal(0),
     );
-    const consumedToDateAmount = contractItem.consumptions.reduce(
-      (accumulator, consumption) => accumulator.add(consumption.amountConsumed),
+    const consumedToDateAmount = previousConsumptions.reduce(
+      (accumulator, consumption) =>
+        accumulator.add(consumption.payableAmount ?? consumption.amountConsumed),
       new Prisma.Decimal(0),
     );
+    const projectedConsumedQuantity = consumedToDateQuantity.add(quantityConsumed);
+    const projectedConsumedAmount = consumedToDateAmount.add(payableAmount);
+
+    if (projectedConsumedQuantity.greaterThan(contractQuantity)) {
+      return {
+        error: `La partida ${contractItem.itemNumber} supera la cantidad vigente disponible.`,
+      };
+    }
+
+    if (projectedConsumedAmount.greaterThan(contractAmount)) {
+      return {
+        error: `La partida ${contractItem.itemNumber} supera el monto vigente disponible.`,
+      };
+    }
 
     grossAmount = grossAmount.add(monthGrossAmount);
     totalDiscounts = totalDiscounts.add(discountAmount);
@@ -1334,10 +1721,10 @@ export async function createMonthlyClosureFromForm(
       itemCode: contractItem.itemCode,
       description: contractItem.description,
       unit: contractItem.unit,
-      contractQuantity: contractItem.originalQuantity,
-      contractAmount: contractItem.originalAmount,
-      consumedToDateQuantity: consumedToDateQuantity.add(quantityConsumed),
-      consumedToDateAmount: consumedToDateAmount.add(monthGrossAmount),
+      contractQuantity,
+      contractAmount,
+      consumedToDateQuantity: projectedConsumedQuantity,
+      consumedToDateAmount: projectedConsumedAmount,
       monthQuantity: quantityConsumed,
       monthGrossAmount,
       discountMode: row.discountMode,
@@ -1346,11 +1733,85 @@ export async function createMonthlyClosureFromForm(
       discountAmount,
       netPayableQuantity: payableQuantity,
       netPayableAmount: payableAmount,
+      note: row.note || null,
     });
   }
 
   try {
     await prisma.$transaction(async (tx) => {
+      let resolvedStatementNumber = statementNumber || null;
+
+      if (!resolvedStatementNumber) {
+        const existingClosures = await tx.monthlyClosure.findMany({
+          where: {
+            contractId,
+          },
+          select: {
+            statementNumber: true,
+          },
+        });
+
+        const highestEdpSequence = existingClosures.reduce((max, closure) => {
+          const value = closure.statementNumber?.trim().toUpperCase();
+
+          if (!value) {
+            return max;
+          }
+
+          const match = /^EDP\s*(\d+)$/.exec(value);
+
+          if (!match) {
+            return max;
+          }
+
+          const parsed = Number.parseInt(match[1], 10);
+
+          if (!Number.isFinite(parsed)) {
+            return max;
+          }
+
+          return Math.max(max, parsed);
+        }, 0);
+
+        resolvedStatementNumber = `EDP${highestEdpSequence + 1}`;
+      }
+
+      if (referenceClosure) {
+        const submittedIds = consumptionRows.map((row) => row.contractItemId);
+
+        if (
+          closureToReplace &&
+          (closureToReplace.year !== year || closureToReplace.month !== month)
+        ) {
+          await tx.monthlyConsumption.deleteMany({
+            where: {
+              year: closureToReplace.year,
+              month: closureToReplace.month,
+              contractItem: {
+                contractId,
+              },
+            },
+          });
+        }
+
+        await tx.monthlyConsumption.deleteMany({
+          where: {
+            year,
+            month,
+            contractItem: {
+              contractId,
+            },
+            ...(submittedIds.length > 0
+              ? {
+                  contractItemId: {
+                    notIn: submittedIds,
+                  },
+                }
+              : {}),
+          },
+        });
+      }
+
       for (const row of consumptionRows) {
         await tx.monthlyConsumption.upsert({
           where: {
@@ -1375,20 +1836,28 @@ export async function createMonthlyClosureFromForm(
         });
       }
 
-      await tx.monthlyClosure.deleteMany({
-        where: {
-          contractId,
-          year,
-          month,
-        },
-      });
+      if (closureToReplace) {
+        await tx.monthlyClosure.delete({
+          where: {
+            id: closureToReplace.id,
+          },
+        });
+      } else {
+        await tx.monthlyClosure.deleteMany({
+          where: {
+            contractId,
+            year,
+            month,
+          },
+        });
+      }
 
       await tx.monthlyClosure.create({
         data: {
           contractId,
           year,
           month,
-          statementNumber: statementNumber || null,
+          statementNumber: resolvedStatementNumber,
           summaryNote: summaryNote || null,
           grossAmount,
           totalDiscounts,
@@ -1401,6 +1870,27 @@ export async function createMonthlyClosureFromForm(
     });
   } catch (error) {
     console.error(error);
+
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === "P2002") {
+        return {
+          error: "No pude guardar el cierre mensual porque ya existe un registro para ese periodo.",
+        };
+      }
+
+      if (error.code === "P2003") {
+        return {
+          error: "No pude guardar el cierre mensual por una referencia invalida de partida. Refresca la pagina e intenta nuevamente.",
+        };
+      }
+
+      if (error.code === "P2020") {
+        return {
+          error: "No pude guardar el cierre mensual porque uno o mas montos no cumplen el formato permitido.",
+        };
+      }
+    }
+
     return {
       error: "No pude guardar el cierre mensual.",
     };
@@ -1408,5 +1898,557 @@ export async function createMonthlyClosureFromForm(
 
   return {
     success: `Cierre ${String(month).padStart(2, "0")}/${year} generado para ${contract.code}.`,
+  };
+}
+
+export async function deleteMonthlyClosureFromForm(
+  formData: FormData,
+): Promise<MutationResult> {
+  const contractId = String(formData.get("contractId") ?? "").trim();
+  const closureId = String(formData.get("closureId") ?? "").trim();
+
+  if (!contractId || !closureId) {
+    return {
+      error: "No pude identificar el cierre a eliminar.",
+    };
+  }
+
+  const prisma = getPrisma();
+  const closure = await prisma.monthlyClosure.findFirst({
+    where: {
+      id: closureId,
+      contractId,
+    },
+    select: {
+      id: true,
+      year: true,
+      month: true,
+      contract: {
+        select: {
+          code: true,
+        },
+      },
+    },
+  });
+
+  if (!closure) {
+    return {
+      error: "No encontre el cierre seleccionado.",
+    };
+  }
+
+  const newerClosureExists = await prisma.monthlyClosure.findFirst({
+    where: {
+      contractId,
+      OR: [
+        {
+          year: {
+            gt: closure.year,
+          },
+        },
+        {
+          year: closure.year,
+          month: {
+            gt: closure.month,
+          },
+        },
+      ],
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (newerClosureExists) {
+    return {
+      error:
+        "No puedes eliminar este cierre porque existe un EDP superior. El cierre quedo como historico.",
+    };
+  }
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.monthlyConsumption.deleteMany({
+        where: {
+          year: closure.year,
+          month: closure.month,
+          contractItem: {
+            contractId,
+          },
+        },
+      });
+
+      await tx.monthlyClosure.delete({
+        where: {
+          id: closure.id,
+        },
+      });
+    });
+  } catch (error) {
+    console.error(error);
+    return {
+      error: "No pude eliminar el cierre mensual.",
+    };
+  }
+
+  return {
+    success: `Cierre ${String(closure.month).padStart(2, "0")}/${closure.year} eliminado de ${closure.contract.code}.`,
+  };
+}
+
+export async function createContractChangeFromForm(
+  formData: FormData,
+): Promise<MutationResult> {
+  const contractId = String(formData.get("contractId") ?? "").trim();
+  const title = String(formData.get("title") ?? "").trim();
+  const description = String(formData.get("description") ?? "").trim();
+  const effectiveDateRaw = String(formData.get("effectiveDate") ?? "").trim();
+  const linesSource = String(formData.get("lines") ?? "").trim();
+
+  if (!contractId || !title || !effectiveDateRaw) {
+    return {
+      error: "Completa contrato, titulo y fecha efectiva de la NOC.",
+    };
+  }
+
+  const effectiveDate = new Date(`${effectiveDateRaw}T00:00:00`);
+
+  if (Number.isNaN(effectiveDate.getTime())) {
+    return {
+      error: "La fecha efectiva de la NOC no es valida.",
+    };
+  }
+
+  const parsedLines = parseContractChangeLines(linesSource);
+
+  if ("error" in parsedLines) {
+    return parsedLines;
+  }
+
+  const prisma = getPrisma();
+  const contract = await prisma.contract.findUnique({
+    where: {
+      id: contractId,
+    },
+    include: {
+      items: true,
+    },
+  });
+
+  if (!contract) {
+    return {
+      error: "No encontre el contrato seleccionado.",
+    };
+  }
+
+  const itemsByNumber = new Map(contract.items.map((item) => [item.itemNumber, item]));
+  const seenNewItemNumbers = new Set<string>();
+  let quantityDeltaTotal = new Prisma.Decimal(0);
+  let amountDeltaTotal = new Prisma.Decimal(0);
+
+  const lineRows = [];
+
+  for (const line of parsedLines.lines) {
+    quantityDeltaTotal = quantityDeltaTotal.add(line.quantityDelta ?? new Prisma.Decimal(0));
+    amountDeltaTotal = amountDeltaTotal.add(line.amountDelta);
+
+    if (line.createsNewItem) {
+      if (itemsByNumber.has(line.itemNumber) || seenNewItemNumbers.has(line.itemNumber)) {
+        return {
+          error: `La partida nueva ${line.itemNumber} ya existe o esta repetida en la NOC.`,
+        };
+      }
+
+      const unitValidation = await validateMeasurementUnit(line.unit);
+
+      if (unitValidation) {
+        return { error: unitValidation };
+      }
+
+      seenNewItemNumbers.add(line.itemNumber);
+      lineRows.push({
+        contractItemId: null,
+        createsNewItem: true,
+        family: null,
+        subfamily: null,
+        itemGroup: null,
+        itemNumber: line.itemNumber,
+        itemCode: line.itemNumber,
+        description: line.description,
+        unit: line.unit,
+        quantityDelta: line.quantityDelta,
+        amountDelta: line.amountDelta,
+        unitPrice: line.unitPrice,
+      });
+      continue;
+    }
+
+    const item = itemsByNumber.get(line.itemNumber);
+
+    if (!item) {
+      return {
+        error: `La partida existente ${line.itemNumber} no pertenece al contrato.`,
+      };
+    }
+
+    const resolvedAmountDelta =
+      line.amountDelta.isZero() && line.quantityDelta
+        ? line.quantityDelta.mul(item.unitPrice)
+        : line.amountDelta;
+
+    if ((line.quantityDelta?.isZero() ?? true) && resolvedAmountDelta.isZero()) {
+      return {
+        error: `La partida ${line.itemNumber} no tiene impacto de cantidad ni monto.`,
+      };
+    }
+
+    amountDeltaTotal = amountDeltaTotal.sub(line.amountDelta).add(resolvedAmountDelta);
+
+    lineRows.push({
+      contractItemId: item.id,
+      createsNewItem: false,
+      family: item.family,
+      subfamily: item.subfamily,
+      itemGroup: item.itemGroup,
+      itemNumber: item.itemNumber,
+      itemCode: item.itemCode,
+      description: line.description || item.description,
+      unit: item.unit,
+      quantityDelta: line.quantityDelta,
+      amountDelta: resolvedAmountDelta,
+      unitPrice: item.unitPrice,
+    });
+  }
+
+  const changeType = resolveChangeType(quantityDeltaTotal, amountDeltaTotal);
+
+  try {
+    await prisma.contractChange.create({
+      data: {
+        contractId,
+        title,
+        description: description || null,
+        type: changeType,
+        status: ChangeStatus.PENDING,
+        quantityDelta: quantityDeltaTotal,
+        amountDelta: amountDeltaTotal,
+        effectiveDate,
+        contractItemId:
+          lineRows.length === 1 && lineRows[0].contractItemId ? lineRows[0].contractItemId : null,
+        lines: {
+          create: lineRows,
+        },
+      },
+    });
+  } catch (error) {
+    console.error(error);
+    return {
+      error: "No pude crear la NOC.",
+    };
+  }
+
+  return {
+    success: `NOC ${title} creada para ${contract.code}.`,
+  };
+}
+
+export async function updateContractChangeStatusFromForm(
+  formData: FormData,
+): Promise<MutationResult> {
+  const changeId = String(formData.get("changeId") ?? "").trim();
+  const action = String(formData.get("action") ?? "").trim();
+
+  if (!changeId) {
+    return {
+      error: "No pude identificar la NOC.",
+    };
+  }
+
+  if (action === "approve") {
+    return approveContractChange(changeId);
+  }
+
+  if (action === "reject") {
+    return rejectContractChange(changeId);
+  }
+
+  if (action === "apply") {
+    return applyContractChange(changeId);
+  }
+
+  return {
+    error: "Accion de NOC no soportada.",
+  };
+}
+
+async function approveContractChange(changeId: string): Promise<MutationResult> {
+  const prisma = getPrisma();
+  const change = await prisma.contractChange.findUnique({
+    where: {
+      id: changeId,
+    },
+    select: {
+      id: true,
+      title: true,
+      status: true,
+    },
+  });
+
+  if (!change) {
+    return {
+      error: "No encontre la NOC seleccionada.",
+    };
+  }
+
+  if (change.status !== ChangeStatus.PENDING) {
+    return {
+      error: "Solo puedes aprobar una NOC pendiente.",
+    };
+  }
+
+  await prisma.contractChange.update({
+    where: {
+      id: change.id,
+    },
+    data: {
+      status: ChangeStatus.APPROVED,
+      approvedAt: new Date(),
+    },
+  });
+
+  return {
+    success: `NOC ${change.title} aprobada.`,
+  };
+}
+
+async function rejectContractChange(changeId: string): Promise<MutationResult> {
+  const prisma = getPrisma();
+  const change = await prisma.contractChange.findUnique({
+    where: {
+      id: changeId,
+    },
+    select: {
+      id: true,
+      title: true,
+      status: true,
+    },
+  });
+
+  if (!change) {
+    return {
+      error: "No encontre la NOC seleccionada.",
+    };
+  }
+
+  if (change.status === ChangeStatus.APPLIED) {
+    return {
+      error: "No puedes rechazar una NOC ya aplicada.",
+    };
+  }
+
+  await prisma.contractChange.update({
+    where: {
+      id: change.id,
+    },
+    data: {
+      status: ChangeStatus.REJECTED,
+      rejectedAt: new Date(),
+    },
+  });
+
+  return {
+    success: `NOC ${change.title} rechazada.`,
+  };
+}
+
+async function applyContractChange(changeId: string): Promise<MutationResult> {
+  const prisma = getPrisma();
+  const change = await prisma.contractChange.findUnique({
+    where: {
+      id: changeId,
+    },
+    include: {
+      contract: {
+        select: {
+          code: true,
+        },
+      },
+      lines: true,
+    },
+  });
+
+  if (!change) {
+    return {
+      error: "No encontre la NOC seleccionada.",
+    };
+  }
+
+  if (change.status === ChangeStatus.APPLIED || change.appliedAt) {
+    return {
+      error: "Esta NOC ya fue aplicada.",
+    };
+  }
+
+  if (change.status !== ChangeStatus.APPROVED) {
+    return {
+      error: "Solo puedes aplicar una NOC aprobada.",
+    };
+  }
+
+  if (change.lines.length === 0) {
+    return {
+      error: "La NOC no tiene lineas para aplicar.",
+    };
+  }
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      for (const line of change.lines) {
+        if (line.appliedAt) {
+          throw new Error(`La linea ${line.itemNumber} ya fue aplicada.`);
+        }
+
+        if (line.createsNewItem) {
+          const existing = await tx.contractItem.findUnique({
+            where: {
+              contractId_itemNumber: {
+                contractId: change.contractId,
+                itemNumber: line.itemNumber,
+              },
+            },
+          });
+
+          if (existing) {
+            throw new Error(`La partida nueva ${line.itemNumber} ya existe.`);
+          }
+
+          const quantity = line.quantityDelta ?? new Prisma.Decimal(0);
+          const unitPrice = line.unitPrice ?? new Prisma.Decimal(0);
+
+          if (quantity.lessThanOrEqualTo(0) || line.amountDelta.lessThanOrEqualTo(0)) {
+            throw new Error(`La partida nueva ${line.itemNumber} debe tener cantidad y monto positivos.`);
+          }
+
+          const item = await tx.contractItem.create({
+            data: {
+              contractId: change.contractId,
+              family: line.family,
+              subfamily: line.subfamily,
+              itemGroup: line.itemGroup,
+              itemNumber: line.itemNumber,
+              itemCode: line.itemCode,
+              description: line.description,
+              unit: line.unit,
+              originalQuantity: quantity,
+              unitPrice,
+              originalAmount: line.amountDelta,
+              currentQuantity: quantity,
+              currentAmount: line.amountDelta,
+            },
+          });
+
+          await tx.contractChangeLine.update({
+            where: {
+              id: line.id,
+            },
+            data: {
+              contractItemId: item.id,
+              beforeQuantity: new Prisma.Decimal(0),
+              beforeAmount: new Prisma.Decimal(0),
+              afterQuantity: item.currentQuantity ?? item.originalQuantity,
+              afterAmount: item.currentAmount ?? item.originalAmount,
+              appliedAt: new Date(),
+            },
+          });
+          continue;
+        }
+
+        if (!line.contractItemId) {
+          throw new Error(`La linea ${line.itemNumber} no tiene partida asociada.`);
+        }
+
+        const item = await tx.contractItem.findUnique({
+          where: {
+            id: line.contractItemId,
+          },
+          include: {
+            consumptions: true,
+          },
+        });
+
+        if (!item) {
+          throw new Error(`No encontre la partida ${line.itemNumber}.`);
+        }
+
+        const consumedQuantity = item.consumptions.reduce(
+          (total, consumption) => total.add(consumption.quantityConsumed),
+          new Prisma.Decimal(0),
+        );
+        const consumedAmount = item.consumptions.reduce(
+          (total, consumption) =>
+            total.add(consumption.payableAmount ?? consumption.amountConsumed),
+          new Prisma.Decimal(0),
+        );
+        const quantityDelta = line.quantityDelta ?? new Prisma.Decimal(0);
+        const beforeQuantity = item.currentQuantity ?? item.originalQuantity;
+        const beforeAmount = item.currentAmount ?? item.originalAmount;
+        const afterQuantity = beforeQuantity.add(quantityDelta);
+        const afterAmount = beforeAmount.add(line.amountDelta);
+
+        if (afterQuantity.lessThan(consumedQuantity)) {
+          throw new Error(
+            `La NOC deja la partida ${item.itemNumber} bajo la cantidad ya consumida.`,
+          );
+        }
+
+        if (afterAmount.lessThan(consumedAmount)) {
+          throw new Error(
+            `La NOC deja la partida ${item.itemNumber} bajo el monto ya consumido.`,
+          );
+        }
+
+        await tx.contractItem.update({
+          where: {
+            id: item.id,
+          },
+          data: {
+            currentQuantity: afterQuantity,
+            currentAmount: afterAmount,
+          },
+        });
+
+        await tx.contractChangeLine.update({
+          where: {
+            id: line.id,
+          },
+          data: {
+            beforeQuantity,
+            beforeAmount,
+            afterQuantity,
+            afterAmount,
+            appliedAt: new Date(),
+          },
+        });
+      }
+
+      await tx.contractChange.update({
+        where: {
+          id: change.id,
+        },
+        data: {
+          status: ChangeStatus.APPLIED,
+          appliedAt: new Date(),
+        },
+      });
+    });
+  } catch (error) {
+    console.error(error);
+    return {
+      error: error instanceof Error ? error.message : "No pude aplicar la NOC.",
+    };
+  }
+
+  return {
+    success: `NOC ${change.title} aplicada en ${change.contract.code}.`,
   };
 }

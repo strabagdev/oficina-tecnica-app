@@ -12,12 +12,23 @@ type ItemRow = {
   originalAmount: string;
   consumedQuantity: string;
   consumedAmount: string;
+  remainingQuantity: string;
+  remainingAmount: string;
+};
+
+type TreeTotals = {
+  contractAmount: string;
+  consumedQuantity: string;
+  consumedAmount: string;
+  remainingQuantity: string;
+  remainingAmount: string;
 };
 
 type GroupRow = {
   key: string;
   wbs: string | null;
   name: string | null;
+  totals: TreeTotals;
   items: ItemRow[];
 };
 
@@ -25,6 +36,7 @@ type SubfamilyRow = {
   key: string;
   wbs: string | null;
   name: string | null;
+  totals: TreeTotals;
   items: ItemRow[];
   groups: GroupRow[];
 };
@@ -33,6 +45,7 @@ type FamilyRow = {
   key: string;
   wbs: string | null;
   name: string | null;
+  totals: TreeTotals;
   items: ItemRow[];
   subfamilies: SubfamilyRow[];
   groups: GroupRow[];
@@ -131,16 +144,46 @@ function ContractItemsTreeContent({
           </button>
         </div>
       </div>
-      <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+      <table className="min-w-[88rem] w-full divide-y divide-slate-200 text-left text-sm">
         <thead className="bg-slate-50 text-slate-500">
           <tr>
-            <th className="px-4 py-3 font-medium">WBS / Item</th>
-            <th className="px-4 py-3 font-medium">Descripcion</th>
-            <th className="px-4 py-3 font-medium">Unidad</th>
-            <th className="px-4 py-3 font-medium">Cantidad base</th>
-            <th className="px-4 py-3 font-medium whitespace-nowrap">Precio unitario</th>
-            <th className="px-4 py-3 font-medium whitespace-nowrap">Monto base</th>
-            <th className="px-4 py-3 font-medium whitespace-nowrap">Consumido</th>
+            <th rowSpan={2} className="px-4 py-3 align-bottom font-medium">
+              Codigo
+            </th>
+            <th rowSpan={2} className="px-4 py-3 align-bottom font-medium">
+              Descripcion
+            </th>
+            <th rowSpan={2} className="px-4 py-3 align-bottom font-medium">
+              Unidad
+            </th>
+            <th colSpan={3} className="border-l border-slate-200 px-4 py-2 text-center text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-600">
+              Contrato
+            </th>
+            <th colSpan={2} className="border-l border-emerald-100 bg-emerald-50/70 px-4 py-2 text-center text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-800">
+              Consumido acumulado
+            </th>
+            <th colSpan={2} className="border-l border-sky-100 bg-sky-50/70 px-4 py-2 text-center text-[11px] font-semibold uppercase tracking-[0.16em] text-sky-800">
+              Saldo por consumir
+            </th>
+          </tr>
+          <tr>
+            <th className="border-l border-slate-200 px-4 py-3 text-right font-medium whitespace-nowrap">
+              Cantidad
+            </th>
+            <th className="px-4 py-3 text-right font-medium whitespace-nowrap">P.U.</th>
+            <th className="px-4 py-3 text-right font-medium whitespace-nowrap">Monto</th>
+            <th className="border-l border-emerald-100 bg-emerald-50/70 px-4 py-3 text-right font-medium whitespace-nowrap text-emerald-800">
+              Cantidad
+            </th>
+            <th className="bg-emerald-50/70 px-4 py-3 text-right font-medium whitespace-nowrap text-emerald-800">
+              Monto
+            </th>
+            <th className="border-l border-sky-100 bg-sky-50/70 px-4 py-3 text-right font-medium whitespace-nowrap text-sky-800">
+              Cantidad
+            </th>
+            <th className="bg-sky-50/70 px-4 py-3 text-right font-medium whitespace-nowrap text-sky-800">
+              Monto
+            </th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100 bg-white">
@@ -278,6 +321,7 @@ function FamilySection({
         level="family"
         wbs={family.wbs}
         name={family.name}
+        totals={family.totals}
         collapsed={collapsed}
         onToggle={onToggle}
         itemCount={
@@ -338,6 +382,7 @@ function SubfamilySection({
         level="subfamily"
         wbs={subfamily.wbs}
         name={subfamily.name}
+        totals={subfamily.totals}
         collapsed={collapsed}
         onToggle={onToggle}
         itemCount={
@@ -379,13 +424,14 @@ function GroupSection({
     <>
       <tr className="bg-white text-slate-800">
         <td
-          colSpan={7}
+          colSpan={3}
           className={`px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] ${
             indentLevel === "nested-group" ? "pl-14" : "pl-10"
           }`}
         >
           <HierarchyLabel wbs={group.wbs} name={group.name} />
         </td>
+        <SummaryCells totals={group.totals} />
       </tr>
       {group.items.map((item) => (
         <ItemDataRow
@@ -403,6 +449,7 @@ function HierarchyToggleRow({
   level,
   wbs,
   name,
+  totals,
   collapsed,
   onToggle,
   itemCount,
@@ -410,6 +457,7 @@ function HierarchyToggleRow({
   level: "family" | "subfamily";
   wbs: string | null;
   name: string | null;
+  totals: TreeTotals;
   collapsed: boolean;
   onToggle: () => void;
   itemCount: number;
@@ -420,7 +468,7 @@ function HierarchyToggleRow({
 
   return (
     <tr className={rowClass}>
-      <td colSpan={7} className={`px-4 py-2 ${indentClass}`}>
+      <td colSpan={3} className={`px-4 py-2 ${indentClass}`}>
         <button
           type="button"
           onClick={onToggle}
@@ -435,7 +483,32 @@ function HierarchyToggleRow({
           </span>
         </button>
       </td>
+      <SummaryCells totals={totals} />
     </tr>
+  );
+}
+
+function SummaryCells({ totals }: { totals: TreeTotals }) {
+  return (
+    <>
+      <td className="border-l border-slate-200 px-4 py-2 text-right text-xs text-slate-400">-</td>
+      <td className="px-4 py-2 text-right text-xs text-slate-400">-</td>
+      <td className="px-4 py-2 text-right text-xs font-semibold tabular-nums text-slate-700">
+        {totals.contractAmount}
+      </td>
+      <td className="border-l border-emerald-100 bg-emerald-50/60 px-4 py-2 text-right text-xs font-semibold tabular-nums text-emerald-800">
+        {totals.consumedQuantity}
+      </td>
+      <td className="bg-emerald-50/60 px-4 py-2 text-right text-xs font-semibold tabular-nums text-emerald-800">
+        {totals.consumedAmount}
+      </td>
+      <td className="border-l border-sky-100 bg-sky-50/60 px-4 py-2 text-right text-xs font-semibold tabular-nums text-sky-800">
+        {totals.remainingQuantity}
+      </td>
+      <td className="bg-sky-50/60 px-4 py-2 text-right text-xs font-semibold tabular-nums text-sky-800">
+        {totals.remainingAmount}
+      </td>
+    </>
   );
 }
 
@@ -489,15 +562,26 @@ function ItemDataRow({
       </td>
       <td className="px-4 py-4 text-slate-600">{item.description}</td>
       <td className="px-4 py-4 text-slate-600">{item.unit}</td>
-      <td className="px-4 py-4 text-slate-600">{item.originalQuantity}</td>
-      <td className="px-4 py-4 text-slate-600 whitespace-nowrap tabular-nums min-w-32">
+      <td className="border-l border-slate-200 px-4 py-4 text-right text-slate-600 tabular-nums">
+        {item.originalQuantity}
+      </td>
+      <td className="px-4 py-4 text-right text-slate-600 whitespace-nowrap tabular-nums min-w-32">
         {item.unitPrice}
       </td>
-      <td className="px-4 py-4 text-slate-600 whitespace-nowrap tabular-nums min-w-32">
+      <td className="px-4 py-4 text-right text-slate-600 whitespace-nowrap tabular-nums min-w-32">
         {item.originalAmount}
       </td>
-      <td className="px-4 py-4 text-slate-600 whitespace-nowrap tabular-nums min-w-40">
-        {item.consumedQuantity} / {item.consumedAmount}
+      <td className="border-l border-emerald-100 bg-emerald-50/40 px-4 py-4 text-right text-emerald-800 whitespace-nowrap tabular-nums">
+        {item.consumedQuantity}
+      </td>
+      <td className="bg-emerald-50/40 px-4 py-4 text-right text-emerald-800 whitespace-nowrap tabular-nums min-w-32">
+        {item.consumedAmount}
+      </td>
+      <td className="border-l border-sky-100 bg-sky-50/40 px-4 py-4 text-right text-sky-800 whitespace-nowrap tabular-nums">
+        {item.remainingQuantity}
+      </td>
+      <td className="bg-sky-50/40 px-4 py-4 text-right text-sky-800 whitespace-nowrap tabular-nums min-w-32">
+        {item.remainingAmount}
       </td>
     </tr>
   );

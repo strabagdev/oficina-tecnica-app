@@ -1,11 +1,13 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { UserRole } from "@prisma/client";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { ContractNav } from "@/components/contract-nav";
 import { FlashBanner } from "@/components/flash-banner";
+import { MonthlyClosureEditorClient } from "@/components/monthly-closure-editor-client";
 import { requireUser } from "@/lib/auth";
-import { getContractDetailSnapshot } from "@/lib/contracts";
+import { getContractDetailSnapshot, getMonthlyClosureEditSnapshot } from "@/lib/contracts";
 
 export const metadata: Metadata = {
   title: "Cierres del contrato | Oficina Tecnica",
@@ -31,10 +33,17 @@ export default async function ContractClosuresPage({
   const flashMessage = Array.isArray(resolvedSearchParams?.message)
     ? resolvedSearchParams?.message[0]
     : resolvedSearchParams?.message;
+  const editClosureId = Array.isArray(resolvedSearchParams?.edit)
+    ? resolvedSearchParams?.edit[0]
+    : resolvedSearchParams?.edit;
 
   if (!contract) {
     notFound();
   }
+
+  const initialEdit = editClosureId
+    ? await getMonthlyClosureEditSnapshot(id, editClosureId)
+    : null;
 
   return (
     <AppShell
@@ -48,56 +57,27 @@ export default async function ContractClosuresPage({
 
       <section className="grid gap-6 xl:grid-cols-[0.72fr_1.28fr]">
         {user.role === UserRole.ADMIN ? (
-          <article className="rounded-[2rem] border border-slate-200 bg-white p-7 shadow-[0_20px_50px_rgba(15,23,42,0.06)]">
-            <h2 className="text-2xl font-semibold text-slate-950">Registrar cierre mensual</h2>
-            <p className="mt-2 text-sm leading-7 text-slate-600">
-              Ingresa el estado de pago del mes. Cada linea puede descontar por porcentaje o por cantidad, segun la unidad de la partida.
-            </p>
-
-            <form action="/api/monthly-closures" method="post" className="mt-6 space-y-5">
-              <input type="hidden" name="contractId" value={contract.id} />
-              <input type="hidden" name="redirectTo" value={`/contracts/${id}/closures`} />
-
-              <div className="grid gap-4 md:grid-cols-3">
-                <Field label="Ano" name="year" placeholder="2026" />
-                <Field label="Mes" name="month" placeholder="3" />
-                <Field label="Estado de pago" name="statementNumber" placeholder="EP-03" />
-              </div>
-
-              <Field
-                label="Resumen"
-                name="summaryNote"
-                placeholder="Observaciones generales del cierre"
-              />
-
-              <div className="space-y-2">
-                <label className="block text-sm font-medium text-slate-700" htmlFor="rows">
-                  Lineas del cierre
-                </label>
-                <textarea
-                  id="rows"
-                  name="rows"
-                  required
-                  rows={10}
-                  placeholder="1.1|120|QUANTITY|10|Descuento por cubicacion&#10;2.4|850|PERCENTAGE|5|Retencion de calidad"
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#0f766e] focus:ring-4 focus:ring-[#99f6e4]"
-                />
-                <p className="text-xs leading-6 text-slate-500">
-                  Formato por linea: <code>codigo|cantidadMes|modoDescuento|valorDescuento|nota</code>
-                </p>
-                <p className="text-xs leading-6 text-slate-500">
-                  Modos validos: <code>PERCENTAGE</code>, <code>QUANTITY</code> o vacio si no aplica descuento.
-                </p>
-              </div>
-
-              <button
-                type="submit"
-                className="rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
-              >
-                Guardar cierre
-              </button>
-            </form>
-          </article>
+          <div id="edp-editor" className={initialEdit ? "xl:col-span-2" : ""}>
+            <MonthlyClosureEditorClient
+              key={initialEdit?.closureId ?? "create-edp"}
+              contractId={contract.id}
+              contractCode={contract.code}
+              currency={contract.currency}
+              redirectTo={`/contracts/${id}/closures`}
+              initialEdit={initialEdit}
+              items={contract.items.map((item) => ({
+                id: item.id,
+                itemNumber: item.itemNumber,
+                itemCode: item.itemCode,
+                description: item.description,
+                unit: item.unit,
+                unitPriceValue: item.unitPriceValue,
+                originalQuantityValue: item.currentQuantityValue,
+                consumedQuantity: item.consumedQuantity,
+                consumedAmount: item.consumedAmount,
+              }))}
+            />
+          </div>
         ) : (
           <article className="rounded-[2rem] border border-slate-200 bg-white p-7 shadow-[0_20px_50px_rgba(15,23,42,0.06)]">
             <h2 className="text-2xl font-semibold text-slate-950">Estados de pago</h2>
@@ -114,7 +94,7 @@ export default async function ContractClosuresPage({
               key={closure.id}
               className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-[0_20px_50px_rgba(15,23,42,0.06)]"
             >
-              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                 <div>
                   <h2 className="text-2xl font-semibold text-slate-950">
                     {closure.periodLabel}
@@ -122,11 +102,49 @@ export default async function ContractClosuresPage({
                   <p className="text-sm leading-7 text-slate-600">
                     Estado de pago {closure.statementNumber}
                   </p>
+                  {!closure.canEdit ? (
+                    <p className="text-xs text-amber-700">
+                      Historico bloqueado: existe un EDP superior.
+                    </p>
+                  ) : null}
                 </div>
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <DataPill label="Bruto" value={closure.grossAmount} />
-                  <DataPill label="Descuentos" value={closure.totalDiscounts} />
-                  <DataPill label="Neto" value={closure.netAmount} />
+                <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center">
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <DataPill label="Bruto" value={closure.grossAmount} />
+                    <DataPill label="Total descuentos del mes" value={closure.totalDiscounts} />
+                    <DataPill label="Neto" value={closure.netAmount} />
+                  </div>
+                  <div className="flex shrink-0 flex-col gap-2">
+                    <Link
+                      href={`/contracts/${id}/closures/${closure.id}`}
+                      className="rounded-full border border-slate-300 px-4 py-2 text-center text-sm font-medium text-slate-800 transition hover:border-slate-900 hover:text-slate-950"
+                    >
+                      Ver detalle
+                    </Link>
+                    <Link
+                      href={`/contracts/${id}/closures?edit=${closure.id}&year=${closure.year}&month=${closure.month}#edp-editor`}
+                      className={`rounded-full border px-4 py-2 text-center text-sm font-medium transition ${
+                        closure.canEdit
+                          ? "border-teal-300 text-teal-800 hover:border-teal-700 hover:text-teal-900"
+                          : "cursor-not-allowed border-slate-200 text-slate-400 pointer-events-none"
+                      }`}
+                    >
+                      Editar / Reemplazar EDP
+                    </Link>
+                    <form action="/api/monthly-closures" method="post">
+                      <input type="hidden" name="action" value="delete" />
+                      <input type="hidden" name="contractId" value={id} />
+                      <input type="hidden" name="closureId" value={closure.id} />
+                      <input type="hidden" name="redirectTo" value={`/contracts/${id}/closures`} />
+                      <button
+                        type="submit"
+                        disabled={!closure.canDelete}
+                        className="w-full rounded-full border border-red-300 px-4 py-2 text-center text-sm font-medium text-red-700 transition hover:border-red-600 hover:text-red-800 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400"
+                      >
+                        Eliminar
+                      </button>
+                    </form>
+                  </div>
                 </div>
               </div>
             </article>
@@ -142,26 +160,6 @@ export default async function ContractClosuresPage({
         </div>
       </section>
     </AppShell>
-  );
-}
-
-function Field(props: {
-  label: string;
-  name: string;
-  placeholder?: string;
-}) {
-  return (
-    <div className="space-y-2">
-      <label className="block text-sm font-medium text-slate-700" htmlFor={props.name}>
-        {props.label}
-      </label>
-      <input
-        id={props.name}
-        name={props.name}
-        placeholder={props.placeholder}
-        className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#0f766e] focus:ring-4 focus:ring-[#99f6e4]"
-      />
-    </div>
   );
 }
 

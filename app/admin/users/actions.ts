@@ -1,13 +1,11 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { UserRole } from "@prisma/client";
 import { requireAdmin } from "@/lib/auth";
 import { hashPassword } from "@/lib/password";
-import { getPrisma, prismaSupportsAuthUserId } from "@/lib/prisma";
-import { createSupabaseServiceClient } from "@/lib/supabase/service";
+import { getPrisma } from "@/lib/prisma";
 import {
   isMissingApprovalStatusSchema,
   resolveUserApprovalStatus,
@@ -27,45 +25,10 @@ function redirectWithMessage(type: "success" | "error", message: string): never 
   redirect(buildRedirectUrl(type, message));
 }
 
-async function findSupabaseUserIdByEmail(
-  supabase: ReturnType<typeof createSupabaseServiceClient>,
-  email: string,
-) {
-  const normalizedEmail = email.trim().toLowerCase();
-  let page = 1;
-
-  while (true) {
-    const { data, error } = await supabase.auth.admin.listUsers({
-      page,
-      perPage: 200,
-    });
-
-    if (error) {
-      throw error;
-    }
-
-    const matchedUser = data.users.find(
-      (user) => user.email?.trim().toLowerCase() === normalizedEmail,
-    );
-
-    if (matchedUser) {
-      return matchedUser.id;
-    }
-
-    if (data.users.length < 200) {
-      return null;
-    }
-
-    page += 1;
-  }
-}
-
 export async function manageUserAction(formData: FormData) {
   await requireAdmin();
 
   const prisma = getPrisma();
-  const supportsAuthUserId = prismaSupportsAuthUserId();
-  const supabase = createSupabaseServiceClient();
   const action = String(formData.get("action") ?? "create");
 
   if (action === "create") {
@@ -78,35 +41,14 @@ export async function manageUserAction(formData: FormData) {
       redirectWithMessage("error", "Completa nombre, correo y contrasena del usuario.");
     }
 
-    let createdAuthUserId: string | null = null;
-
     try {
-      const { data: createdAuthUser, error: authError } = await supabase.auth.admin.createUser({
-        email,
-        password,
-        email_confirm: true,
-        user_metadata: {
-          name,
-        },
-      });
-
-      if (authError || !createdAuthUser.user) {
-        redirectWithMessage(
-          "error",
-          "No se pudo crear el usuario en Supabase. Revisa si el correo ya existe.",
-        );
-      }
-
-      createdAuthUserId = createdAuthUser.user.id;
-
       const createdUser = await prisma.user.create({
         data: {
           name,
           email,
-          passwordHash: hashPassword(randomUUID()),
+          passwordHash: hashPassword(password),
           role: role === UserRole.ADMIN ? UserRole.ADMIN : UserRole.VIEWER,
           active: true,
-          ...(supportsAuthUserId && createdAuthUserId ? { authUserId: createdAuthUserId } : {}),
         },
         select: {
           id: true,
@@ -125,13 +67,9 @@ export async function manageUserAction(formData: FormData) {
         }
       }
     } catch {
-      if (createdAuthUserId) {
-        await supabase.auth.admin.deleteUser(createdAuthUserId).catch(() => undefined);
-      }
-
       redirectWithMessage(
         "error",
-        "No se pudo crear el usuario interno. Revisa si el correo ya existe.",
+        "No se pudo crear el usuario. Revisa si el correo ya existe.",
       );
     }
 
@@ -211,94 +149,12 @@ export async function manageUserAction(formData: FormData) {
       redirectWithMessage("error", "Ingresa una nueva contrasena.");
     }
 
-    const targetUser = await prisma.user.findUnique({
-      where: {
-        id: userId,
-      },
-      select: {
-        authUserId: true,
-        email: true,
-        name: true,
-      },
-    });
-
-    if (!targetUser) {
-      redirectWithMessage("error", "Usuario no encontrado.");
-    }
-
-    let authUserId = targetUser.authUserId;
-
-    if (!authUserId) {
-      try {
-        authUserId = await findSupabaseUserIdByEmail(supabase, targetUser.email);
-      } catch {
-        redirectWithMessage("error", "No se pudo consultar la cuenta en Supabase.");
-      }
-    }
-
-    if (authUserId) {
-      const { error } = await supabase.auth.admin.updateUserById(authUserId, {
-        password,
-        email_confirm: true,
-      });
-
-      if (error) {
-        redirectWithMessage("error", "No se pudo actualizar la clave en Supabase.");
-      }
-
-      if (supportsAuthUserId && targetUser.authUserId !== authUserId) {
-        await prisma.user.update({
-          where: {
-            id: userId,
-          },
-          data: {
-            authUserId,
-          },
-          select: {
-            id: true,
-          },
-        });
-      }
-    } else {
-      const { data: createdAuthUser, error } = await supabase.auth.admin.createUser({
-        email: targetUser.email,
-        password,
-        email_confirm: true,
-        user_metadata: {
-          name: targetUser.name,
-        },
-      });
-
-      if (error || !createdAuthUser.user) {
-        redirectWithMessage(
-          "error",
-          "No se pudo crear la cuenta en Supabase para este usuario.",
-        );
-      }
-
-      authUserId = createdAuthUser.user.id;
-
-      if (supportsAuthUserId) {
-        await prisma.user.update({
-          where: {
-            id: userId,
-          },
-          data: {
-            authUserId,
-          },
-          select: {
-            id: true,
-          },
-        });
-      }
-    }
-
     await prisma.user.update({
       where: {
         id: userId,
       },
       data: {
-        passwordHash: hashPassword(randomUUID()),
+        passwordHash: hashPassword(password),
       },
       select: {
         id: true,
@@ -306,7 +162,7 @@ export async function manageUserAction(formData: FormData) {
     });
 
     revalidatePath("/admin/users");
-    redirectWithMessage("success", "Contrasena actualizada en Supabase.");
+    redirectWithMessage("success", "Contrasena actualizada.");
   }
 
   redirectWithMessage("error", "Accion no soportada.");

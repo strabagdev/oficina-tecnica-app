@@ -1,9 +1,11 @@
 import "server-only";
 
-import { ChangeStatus, DiscountMode, Prisma, UserRole } from "@prisma/client";
+import { ChangeStatus, DiscountMode, MonthlyClosureStatus, Prisma, UserRole } from "@prisma/client";
 import {
+  decimalToFixedString,
   formatCurrencyDisplay,
   formatDecimalDisplay,
+  getMoneyScaleForCurrency,
 } from "@/lib/numeric";
 import { getPrisma } from "@/lib/prisma";
 import {
@@ -42,6 +44,13 @@ function formatCurrency(value: Prisma.Decimal | string | number | null | undefin
 
 function formatQuantity(value: Prisma.Decimal | string | number | null | undefined) {
   return formatDecimalDisplay(value, { scale: 3, trimTrailingZeros: true });
+}
+
+function formatMoneyValue(
+  value: Prisma.Decimal | string | number | null | undefined,
+  currency: string | null | undefined,
+) {
+  return decimalToFixedString(value, getMoneyScaleForCurrency(currency));
 }
 
 function formatDateForInput(value: Date | null | undefined) {
@@ -134,7 +143,11 @@ export async function getContractOptions() {
       _count: {
         select: {
           items: true,
-          monthlyClosures: true,
+          monthlyClosures: {
+            where: {
+              status: MonthlyClosureStatus.CLOSED,
+            },
+          },
         },
       },
     },
@@ -164,7 +177,11 @@ export async function getContractListSnapshot() {
       _count: {
         select: {
           items: true,
-          monthlyClosures: true,
+          monthlyClosures: {
+            where: {
+              status: MonthlyClosureStatus.CLOSED,
+            },
+          },
           changes: true,
         },
       },
@@ -212,8 +229,11 @@ export async function getContractDetailSnapshot(contractId: string) {
           {
             month: "desc",
           },
+          {
+            version: "desc",
+          },
         ],
-        take: 6,
+        take: 12,
       },
       changes: {
         orderBy: {
@@ -245,22 +265,49 @@ export async function getContractDetailSnapshot(contractId: string) {
     return compareItemNumbers(left.itemCode, right.itemCode);
   });
 
+  const officialClosures = await prisma.monthlyClosure.findMany({
+    where: {
+      contractId,
+      status: MonthlyClosureStatus.CLOSED,
+    },
+    select: {
+      id: true,
+      year: true,
+      month: true,
+    },
+  });
+  const officialPeriods = officialClosures.map((closure) => ({
+    year: closure.year,
+    month: closure.month,
+  }));
   const consumedQuantityByItem = new Map<string, Prisma.Decimal>();
   const consumedAmountByItem = new Map<string, Prisma.Decimal>();
 
-  const consumptions = await prisma.monthlyConsumption.findMany({
-    where: {
-      contractItem: {
-        contractId,
-      },
-    },
-    select: {
-      contractItemId: true,
-      quantityConsumed: true,
-      payableAmount: true,
-      amountConsumed: true,
-    },
-  });
+  const consumptions = officialPeriods.length > 0
+    ? await prisma.monthlyConsumption.findMany({
+        where: {
+          contractItem: {
+            contractId,
+          },
+          OR: officialPeriods,
+        },
+        select: {
+          contractItemId: true,
+          quantityConsumed: true,
+          payableAmount: true,
+          amountConsumed: true,
+        },
+      })
+    : [];
+
+  const hasNewerOfficialClosure = (closure: ContractDetailRecord["monthlyClosures"][number]) =>
+    officialClosures.some((candidate) => {
+      if (candidate.id === closure.id) {
+        return false;
+      }
+
+      return candidate.year > closure.year || (candidate.year === closure.year && candidate.month > closure.month);
+    });
 
   for (const row of consumptions) {
     consumedQuantityByItem.set(
@@ -313,7 +360,7 @@ export async function getContractDetailSnapshot(contractId: string) {
     consumedAmount: formatCurrency(consumedContractAmount),
     remainingAmount: formatCurrency(remainingContractAmount),
     itemCount: sortedItems.length,
-    closureCount: contract.monthlyClosures.length,
+    closureCount: officialClosures.length,
     items: sortedItems.map((item: ContractDetailRecord["items"][number]) => {
       const currentQuantity = item.currentQuantity ?? item.originalQuantity;
       const currentAmount = item.currentAmount ?? item.originalAmount;
@@ -334,14 +381,14 @@ export async function getContractDetailSnapshot(contractId: string) {
         description: item.description,
         unit: item.unit,
         originalQuantityValue: item.originalQuantity.toFixed(3).replace(/\.?0+$/, ""),
-        unitPriceValue: item.unitPrice.toFixed(2).replace(/\.?0+$/, ""),
-        originalAmountValue: item.originalAmount.toFixed(2),
+        unitPriceValue: formatMoneyValue(item.unitPrice, contract.currency),
+        originalAmountValue: formatMoneyValue(item.originalAmount, contract.currency),
         currentQuantityValue: currentQuantity.toFixed(3).replace(/\.?0+$/, ""),
-        currentAmountValue: currentAmount.toFixed(2),
+        currentAmountValue: formatMoneyValue(currentAmount, contract.currency),
         consumedQuantityValue: consumedQuantity.toFixed(3),
-        consumedAmountValue: consumedAmount.toFixed(2),
+        consumedAmountValue: formatMoneyValue(consumedAmount, contract.currency),
         remainingQuantityValue: remainingQuantity.toFixed(3),
-        remainingAmountValue: remainingAmount.toFixed(2),
+        remainingAmountValue: formatMoneyValue(remainingAmount, contract.currency),
         originalQuantity: formatQuantity(item.originalQuantity),
         unitPrice: formatCurrency(item.unitPrice),
         originalAmount: formatCurrency(item.originalAmount),
@@ -354,17 +401,20 @@ export async function getContractDetailSnapshot(contractId: string) {
       };
     }),
     closures: contract.monthlyClosures.map(
-      (closure: ContractDetailRecord["monthlyClosures"][number], index: number) => ({
+      (closure: ContractDetailRecord["monthlyClosures"][number]) => ({
       id: closure.id,
       year: closure.year,
       month: closure.month,
+      status: closure.status,
+      statusLabel: closure.status === MonthlyClosureStatus.REPLACED ? "Reemplazado" : "Oficial",
+      version: closure.version,
       periodLabel: `${String(closure.month).padStart(2, "0")}/${closure.year}`,
       statementNumber: closure.statementNumber ?? "Sin numero",
       grossAmount: formatCurrency(closure.grossAmount),
       totalDiscounts: formatCurrency(closure.totalDiscounts),
       netAmount: formatCurrency(closure.netAmount),
-      canEdit: index === 0,
-      canDelete: index === 0,
+      canEdit: closure.status === MonthlyClosureStatus.CLOSED && !hasNewerOfficialClosure(closure),
+      canDelete: closure.status === MonthlyClosureStatus.CLOSED && !hasNewerOfficialClosure(closure),
     })),
     changes: contract.changes.map((change: ContractDetailRecord["changes"][number]) => ({
       id: change.id,
@@ -452,6 +502,9 @@ export async function getRecentClosures() {
   const prisma = getPrisma();
 
   const closures = await prisma.monthlyClosure.findMany({
+    where: {
+      status: MonthlyClosureStatus.CLOSED,
+    },
     orderBy: [
       {
         year: "desc",
@@ -542,6 +595,7 @@ export async function getMonthlyClosureDetailSnapshot(
   const newerClosureExists = await prisma.monthlyClosure.findFirst({
     where: {
       contractId,
+      status: MonthlyClosureStatus.CLOSED,
       OR: [
         {
           year: {
@@ -572,7 +626,10 @@ export async function getMonthlyClosureDetailSnapshot(
     periodLabel: `${String(closure.month).padStart(2, "0")}/${closure.year}`,
     statementNumber: closure.statementNumber ?? "Sin numero",
     summaryNote: closure.summaryNote?.trim() ?? "",
-    canEdit: !newerClosureExists,
+    status: closure.status,
+    statusLabel: closure.status === MonthlyClosureStatus.REPLACED ? "Reemplazado" : "Oficial",
+    version: closure.version,
+    canEdit: closure.status === MonthlyClosureStatus.CLOSED && !newerClosureExists,
     closedAtLabel: new Intl.DateTimeFormat("es-CL", {
       dateStyle: "long",
       timeStyle: "short",
@@ -611,7 +668,11 @@ export async function getMonthlyClosureEditSnapshot(
 ) {
   const prisma = getPrisma();
   const closure = await prisma.monthlyClosure.findFirst({
-    where: { id: closureId, contractId },
+    where: {
+      id: closureId,
+      contractId,
+      status: MonthlyClosureStatus.CLOSED,
+    },
     include: {
       itemSnapshots: {
         orderBy: [{ itemNumber: "asc" }, { itemCode: "asc" }],

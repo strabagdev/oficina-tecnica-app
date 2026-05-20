@@ -1,12 +1,12 @@
 import "server-only";
 
 import { randomBytes } from "node:crypto";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { UserRole } from "@prisma/client";
-import { getPrisma, prismaSupportsAuthUserId } from "@/lib/prisma";
-import { hashPassword } from "@/lib/password";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { SESSION_COOKIE_NAME } from "@/lib/auth-cookie";
+import { getPrisma } from "@/lib/prisma";
+import { hashPassword, verifyPassword } from "@/lib/password";
 import {
   isMissingApprovalStatusSchema,
   USER_APPROVAL_STATUS,
@@ -16,6 +16,7 @@ type AuthSeedUser = {
   email: string;
   name: string;
   role: UserRole;
+  passwordHash: string;
 };
 
 export type AuthUser = {
@@ -25,13 +26,6 @@ export type AuthUser = {
   role: UserRole;
 };
 
-type SyncedUserResult =
-  | { status: "approved"; user: AuthUser }
-  | { status: "pending" }
-  | { status: "rejected" }
-  | { status: "inactive" }
-  | { status: "missing-email" };
-
 export type LoginAttemptResult =
   | { status: "success"; user: AuthUser }
   | { status: "invalid-credentials" }
@@ -39,18 +33,39 @@ export type LoginAttemptResult =
   | { status: "rejected" }
   | { status: "inactive" };
 
+const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
+
 const authUserSelect = {
   id: true,
-  authUserId: true,
   name: true,
   email: true,
+  passwordHash: true,
   role: true,
   active: true,
 };
 
+function getSessionExpiresAt() {
+  return new Date(Date.now() + SESSION_MAX_AGE_SECONDS * 1000);
+}
+
+function buildSessionCookieOptions(expiresAt: Date) {
+  return {
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    expires: expiresAt,
+  };
+}
+
+function buildPlaceholderPasswordHash() {
+  return hashPassword(randomBytes(32).toString("hex"));
+}
+
 function getSeedUsers(): AuthSeedUser[] {
-  const adminEmail = process.env.ADMIN_EMAIL?.trim();
+  const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
   const adminName = process.env.ADMIN_NAME?.trim() || "Administrador";
+  const adminPassword = process.env.ADMIN_PASSWORD?.trim();
 
   if (!adminEmail) {
     return [];
@@ -61,23 +76,11 @@ function getSeedUsers(): AuthSeedUser[] {
       email: adminEmail,
       name: adminName,
       role: UserRole.ADMIN,
+      passwordHash: adminPassword
+        ? hashPassword(adminPassword)
+        : buildPlaceholderPasswordHash(),
     },
   ];
-}
-
-function buildPlaceholderPasswordHash() {
-  return hashPassword(randomBytes(32).toString("hex"));
-}
-
-function getAuthDisplayName(user: Pick<SupabaseUser, "email" | "user_metadata">) {
-  const metadataName =
-    typeof user.user_metadata?.name === "string" ? user.user_metadata.name.trim() : "";
-
-  if (metadataName) {
-    return metadataName;
-  }
-
-  return user.email?.split("@")[0] || "Usuario";
 }
 
 async function getUserApprovalStatus(prisma: ReturnType<typeof getPrisma>, userId: string) {
@@ -93,22 +96,6 @@ async function getUserApprovalStatus(prisma: ReturnType<typeof getPrisma>, userI
     }
 
     throw error;
-  }
-}
-
-async function updateUserApprovalStatus(
-  prisma: ReturnType<typeof getPrisma>,
-  userId: string,
-  approvalStatus: string,
-) {
-  try {
-    await prisma.$executeRaw`
-      update "User" set "approvalStatus" = ${approvalStatus} where id = ${userId}
-    `;
-  } catch (error) {
-    if (!isMissingApprovalStatusSchema(error)) {
-      throw error;
-    }
   }
 }
 
@@ -131,8 +118,102 @@ async function countUsersByApprovalStatus(
   }
 }
 
+async function ensureBootstrapAdmin(prisma: ReturnType<typeof getPrisma>) {
+  const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+  const adminName = process.env.ADMIN_NAME?.trim() || "Administrador";
+  const adminPassword = process.env.ADMIN_PASSWORD?.trim();
+
+  if (!adminEmail || !adminPassword) {
+    return;
+  }
+
+  const existingAdmin = await prisma.user.findUnique({
+    where: {
+      email: adminEmail,
+    },
+    select: {
+      id: true,
+      passwordHash: true,
+      active: true,
+      role: true,
+    },
+  });
+
+  const passwordMatches = existingAdmin
+    ? verifyPassword(adminPassword, existingAdmin.passwordHash)
+    : false;
+
+  const admin = existingAdmin
+    ? await prisma.user.update({
+        where: {
+          id: existingAdmin.id,
+        },
+        data: {
+          name: adminName,
+          role: UserRole.ADMIN,
+          active: true,
+          ...(!passwordMatches ? { passwordHash: hashPassword(adminPassword) } : {}),
+        },
+        select: {
+          id: true,
+        },
+      })
+    : await prisma.user.create({
+        data: {
+          email: adminEmail,
+          name: adminName,
+          role: UserRole.ADMIN,
+          passwordHash: hashPassword(adminPassword),
+          active: true,
+          approvalStatus: USER_APPROVAL_STATUS.APPROVED,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+  try {
+    await prisma.$executeRaw`
+      update "User"
+      set "approvalStatus" = ${USER_APPROVAL_STATUS.APPROVED}
+      where id = ${admin.id}
+    `;
+  } catch (error) {
+    if (!isMissingApprovalStatusSchema(error)) {
+      throw error;
+    }
+  }
+}
+
+async function createSession(userId: string) {
+  const prisma = getPrisma();
+  const token = randomBytes(32).toString("hex");
+  const expiresAt = getSessionExpiresAt();
+
+  await prisma.session.create({
+    data: {
+      token,
+      userId,
+      expiresAt,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  const cookieStore = await cookies();
+  cookieStore.set(SESSION_COOKIE_NAME, token, buildSessionCookieOptions(expiresAt));
+}
+
+async function clearSessionCookie() {
+  const cookieStore = await cookies();
+  cookieStore.delete(SESSION_COOKIE_NAME);
+}
+
 export async function ensureBaseUsers() {
   const prisma = getPrisma();
+  await ensureBootstrapAdmin(prisma);
+
   const count = await prisma.user.count();
 
   if (count > 0) {
@@ -147,10 +228,12 @@ export async function ensureBaseUsers() {
 
   await prisma.user.createMany({
     data: seedUsers.map((user) => ({
-      email: user.email.toLowerCase(),
+      email: user.email,
       name: user.name,
       role: user.role,
-      passwordHash: buildPlaceholderPasswordHash(),
+      passwordHash: user.passwordHash,
+      approvalStatus: USER_APPROVAL_STATUS.APPROVED,
+      active: true,
     })),
   });
 }
@@ -173,147 +256,118 @@ export async function getLoginSetup() {
   };
 }
 
-async function syncInternalUser(authUser: SupabaseUser): Promise<SyncedUserResult> {
-  await ensureBaseUsers();
-  const prisma = getPrisma();
-  const supportsAuthUserId = prismaSupportsAuthUserId();
-  const email = authUser.email?.trim().toLowerCase();
-
-  if (!email) {
-    return { status: "missing-email" };
-  }
-
-  const existingUser = await prisma.user.findFirst({
-    where: {
-      OR: supportsAuthUserId
-        ? [
-            { authUserId: authUser.id },
-            { email },
-          ]
-        : [{ email }],
-    },
-    select: authUserSelect,
-  });
-
-  const displayName = getAuthDisplayName(authUser);
-  const bootstrapAdminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
-
-  const user = existingUser
-    ? await prisma.user.update({
-        where: {
-          id: existingUser.id,
-        },
-        data: {
-          email,
-          name: existingUser.name || displayName,
-          ...(supportsAuthUserId
-            ? { authUserId: existingUser.authUserId ?? authUser.id }
-            : {}),
-        },
-        select: authUserSelect,
-      })
-    : await prisma.user.create({
-        data: {
-          email,
-          name: displayName,
-          passwordHash: buildPlaceholderPasswordHash(),
-          role: bootstrapAdminEmail === email ? UserRole.ADMIN : UserRole.VIEWER,
-          active: true,
-          ...(supportsAuthUserId ? { authUserId: authUser.id } : {}),
-        },
-        select: authUserSelect,
-      });
-  const approvalStatus = existingUser
-    ? await getUserApprovalStatus(prisma, user.id)
-    : bootstrapAdminEmail === email
-      ? USER_APPROVAL_STATUS.APPROVED
-      : USER_APPROVAL_STATUS.PENDING;
-
-  if (!existingUser) {
-    await updateUserApprovalStatus(prisma, user.id, approvalStatus);
-  }
-
-  if (!user.active) {
-    return { status: "inactive" };
-  }
-
-  if (approvalStatus === USER_APPROVAL_STATUS.PENDING) {
-    return { status: "pending" };
-  }
-
-  if (approvalStatus === USER_APPROVAL_STATUS.REJECTED) {
-    return { status: "rejected" };
-  }
-
-  return {
-    status: "approved",
-    user: {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-    } satisfies AuthUser,
-  };
-}
-
 export async function deleteSession() {
-  const supabase = await createSupabaseServerClient();
-  await supabase.auth.signOut();
+  const cookieStore = await cookies();
+  const token = cookieStore.get(SESSION_COOKIE_NAME)?.value;
+
+  if (token) {
+    await getPrisma().session.deleteMany({
+      where: {
+        token,
+      },
+    });
+  }
+
+  await clearSessionCookie();
 }
 
 export async function loginWithPassword(
   email: string,
   password: string,
 ): Promise<LoginAttemptResult> {
-  const supabase = await createSupabaseServerClient();
-  const normalizedEmail = email.toLowerCase();
-  const { data, error } = await supabase.auth.signInWithPassword({
-    email: normalizedEmail,
-    password,
+  await ensureBaseUsers();
+
+  const prisma = getPrisma();
+  const normalizedEmail = email.trim().toLowerCase();
+  const user = await prisma.user.findUnique({
+    where: {
+      email: normalizedEmail,
+    },
+    select: authUserSelect,
   });
 
-  if (error || !data.user) {
+  if (!user || !verifyPassword(password, user.passwordHash)) {
     return { status: "invalid-credentials" };
   }
 
-  const syncResult = await syncInternalUser(data.user);
-
-  if (syncResult.status !== "approved") {
-    await supabase.auth.signOut();
-
-    if (syncResult.status === "pending") {
-      return { status: "pending-approval" };
-    }
-
-    if (syncResult.status === "rejected") {
-      return { status: "rejected" };
-    }
-
+  if (!user.active) {
     return { status: "inactive" };
   }
 
-  return { status: "success", user: syncResult.user };
+  const approvalStatus = await getUserApprovalStatus(prisma, user.id);
+
+  if (approvalStatus === USER_APPROVAL_STATUS.PENDING) {
+    return { status: "pending-approval" };
+  }
+
+  if (approvalStatus === USER_APPROVAL_STATUS.REJECTED) {
+    return { status: "rejected" };
+  }
+
+  await createSession(user.id);
+
+  return {
+    status: "success",
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+    },
+  };
 }
 
 export async function getCurrentUser() {
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser();
+  await ensureBaseUsers();
 
-  if (error || !user) {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(SESSION_COOKIE_NAME)?.value;
+
+  if (!token) {
     return null;
   }
 
-  const syncResult = await syncInternalUser(user);
+  const prisma = getPrisma();
+  const session = await prisma.session.findUnique({
+    where: {
+      token,
+    },
+    include: {
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          active: true,
+        },
+      },
+    },
+  });
 
-  if (syncResult.status !== "approved") {
-    await supabase.auth.signOut();
+  if (!session || session.expiresAt <= new Date()) {
+    await deleteSession();
     return null;
   }
 
-  return syncResult.user;
+  if (!session.user.active) {
+    await deleteSession();
+    return null;
+  }
+
+  const approvalStatus = await getUserApprovalStatus(prisma, session.user.id);
+
+  if (approvalStatus !== USER_APPROVAL_STATUS.APPROVED) {
+    await deleteSession();
+    return null;
+  }
+
+  return {
+    id: session.user.id,
+    name: session.user.name,
+    email: session.user.email,
+    role: session.user.role,
+  } satisfies AuthUser;
 }
 
 export async function requireUser() {

@@ -1,12 +1,10 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
 import { redirect } from "next/navigation";
 import { UserRole } from "@prisma/client";
 import { deleteSession, loginWithPassword } from "@/lib/auth";
 import { hashPassword } from "@/lib/password";
-import { getPrisma, prismaSupportsAuthUserId } from "@/lib/prisma";
-import { createSupabaseServiceClient } from "@/lib/supabase/service";
+import { getPrisma } from "@/lib/prisma";
 import {
   isMissingApprovalStatusSchema,
   USER_APPROVAL_STATUS,
@@ -91,8 +89,6 @@ export async function requestAccessAction(
   }
 
   const prisma = getPrisma();
-  const supportsAuthUserId = prismaSupportsAuthUserId();
-  const supabase = createSupabaseServiceClient();
   const existingUser = await prisma.user.findUnique({
     where: {
       email,
@@ -137,34 +133,14 @@ export async function requestAccessAction(
     };
   }
 
-  let createdAuthUserId: string | null = null;
-
   try {
-    const { data: createdAuthUser, error: authError } = await supabase.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: {
-        name,
-      },
-    });
-
-    if (authError || !createdAuthUser.user) {
-      return {
-        error: "No se pudo crear la cuenta en Supabase. Revisa si el correo ya existe.",
-      };
-    }
-
-    createdAuthUserId = createdAuthUser.user.id;
-
     const createdUser = await prisma.user.create({
       data: {
         name,
         email,
-        passwordHash: hashPassword(randomUUID()),
+        passwordHash: hashPassword(password),
         role: UserRole.VIEWER,
         active: true,
-        ...(supportsAuthUserId ? { authUserId: createdAuthUserId } : {}),
       },
       select: {
         id: true,
@@ -183,10 +159,6 @@ export async function requestAccessAction(
       }
     }
   } catch {
-    if (createdAuthUserId) {
-      await supabase.auth.admin.deleteUser(createdAuthUserId).catch(() => undefined);
-    }
-
     return {
       error: "No se pudo registrar la solicitud. Revisa si el correo ya existe.",
     };

@@ -2,6 +2,12 @@ import { Prisma } from "@prisma/client";
 
 type DecimalLike = Prisma.Decimal | string | number | null | undefined;
 
+const ZERO_DECIMAL_CURRENCIES = new Set(["CLP"]);
+
+export function getMoneyScaleForCurrency(currency: string | null | undefined) {
+  return ZERO_DECIMAL_CURRENCIES.has((currency ?? "").trim().toUpperCase()) ? 0 : 2;
+}
+
 export function normalizeDecimalInput(value: string) {
   const raw = value.trim().replace(/\s+/g, "").replace(/'/g, "");
 
@@ -45,6 +51,37 @@ export function parseDecimalInput(value: string) {
   }
 }
 
+function toDecimalPlaces(value: Prisma.Decimal, scale: number) {
+  return value.toDecimalPlaces(scale, Prisma.Decimal.ROUND_HALF_UP);
+}
+
+export function parseQuantityDecimal(value: string, options?: { scale?: number }) {
+  const parsed = parseDecimalInput(value);
+
+  if (!parsed) {
+    return null;
+  }
+
+  return toDecimalPlaces(parsed, options?.scale ?? 3);
+}
+
+export function parseMoneyDecimal(value: string, options?: { scale?: number }) {
+  const parsed = parseDecimalInput(value);
+
+  if (!parsed) {
+    return null;
+  }
+
+  return toDecimalPlaces(parsed, options?.scale ?? 2);
+}
+
+export function roundMoneyForCurrency(
+  value: Prisma.Decimal,
+  currency: string | null | undefined,
+) {
+  return toDecimalPlaces(value, getMoneyScaleForCurrency(currency));
+}
+
 export function decimalToFixedString(value: DecimalLike, scale: number) {
   if (value === null || value === undefined) {
     return scale === 0 ? "0" : `0.${"0".repeat(scale)}`;
@@ -81,4 +118,11 @@ export function formatDecimalDisplay(
 
 export function formatCurrencyDisplay(value: DecimalLike) {
   return `$ ${formatDecimalDisplay(value, { scale: 0 })}`;
+}
+
+export function formatMoneyExport(
+  value: DecimalLike,
+  currency: string | null | undefined,
+) {
+  return decimalToFixedString(value, getMoneyScaleForCurrency(currency));
 }

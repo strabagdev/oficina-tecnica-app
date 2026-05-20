@@ -61,6 +61,20 @@ export default async function MonthlyClosureDetailPage({
               <p className="text-sm text-slate-600">
                 Estado de pago <span className="font-semibold text-slate-950">{detail.statementNumber}</span>
               </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <span
+                  className={`rounded-full border px-2.5 py-1 text-xs font-medium ${
+                    detail.status === "REPLACED"
+                      ? "border-amber-100 bg-amber-50 text-amber-800"
+                      : "border-teal-100 bg-teal-50 text-teal-800"
+                  }`}
+                >
+                  {detail.statusLabel}
+                </span>
+                <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600">
+                  Version {detail.version}
+                </span>
+              </div>
               <p className="mt-1 text-xs text-slate-500">Registrado: {detail.closedAtLabel}</p>
               {detail.summaryNote ? (
                 <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-700">{detail.summaryNote}</p>

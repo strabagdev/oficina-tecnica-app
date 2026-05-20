@@ -66,7 +66,7 @@ export default async function LoginPage() {
             <div className="mb-8 space-y-2">
               <h2 className="text-2xl font-semibold text-slate-950">Ingresar</h2>
               <p className="text-sm leading-6 text-slate-600">
-                Acceso con usuarios existentes en Supabase Auth. Las nuevas
+                Acceso con usuarios internos del sistema. Las nuevas
                 solicitudes quedan pendientes hasta que un administrador apruebe
                 el acceso dentro del sistema.
               </p>

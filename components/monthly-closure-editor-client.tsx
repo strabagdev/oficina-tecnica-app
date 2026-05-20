@@ -4,7 +4,12 @@ import { DiscountMode, Prisma } from "@prisma/client";
 import Link from "next/link";
 import type { FormEvent } from "react";
 import { useCallback, useMemo, useRef, useState } from "react";
-import { parseDecimalInput } from "@/lib/numeric";
+import {
+  getMoneyScaleForCurrency,
+  parseDecimalInput,
+  parseMoneyDecimal,
+  roundMoneyForCurrency,
+} from "@/lib/numeric";
 
 export type ClosureEditorItem = {
   id: string;
@@ -14,8 +19,16 @@ export type ClosureEditorItem = {
   unit: string | null;
   unitPriceValue: string;
   originalQuantityValue: string;
+  currentQuantityValue: string;
+  currentAmountValue: string;
   consumedQuantity: string;
+  consumedQuantityValue: string;
   consumedAmount: string;
+  consumedAmountValue: string;
+  remainingQuantity: string;
+  remainingQuantityValue: string;
+  remainingAmount: string;
+  remainingAmountValue: string;
 };
 
 type RowEdit = {
@@ -49,6 +62,50 @@ function formatMoneyPreview(value: Prisma.Decimal, currency: string) {
   } catch {
     return `${currency} ${n.toLocaleString("es-CL")}`;
   }
+}
+
+function formatQuantityPreview(value: Prisma.Decimal) {
+  return value.toFixed(3).replace(/\.?0+$/, "") || "0";
+}
+
+function calculateLinePreview(
+  quantity: Prisma.Decimal,
+  unitPrice: Prisma.Decimal,
+  row: RowEdit,
+  currency: string,
+) {
+  const monthGross = roundMoneyForCurrency(quantity.mul(unitPrice), currency);
+  let discountAmount = new Prisma.Decimal(0);
+
+  if (row.discountMode === DiscountMode.PERCENTAGE && row.discountValue.trim()) {
+    const pct = parseDecimalInput(row.discountValue.trim());
+    if (pct) {
+      discountAmount = roundMoneyForCurrency(monthGross.mul(pct).div(100), currency);
+    }
+  } else if (row.discountMode === DiscountMode.AMOUNT && row.discountValue.trim()) {
+    const amount = parseMoneyDecimal(row.discountValue.trim(), {
+      scale: getMoneyScaleForCurrency(currency),
+    });
+    if (amount) {
+      discountAmount = amount.greaterThan(monthGross) ? monthGross : amount;
+    }
+  } else if (row.discountMode === DiscountMode.QUANTITY && row.discountValue.trim()) {
+    const discountQuantity = parseDecimalInput(row.discountValue.trim());
+    if (discountQuantity) {
+      const effective = discountQuantity.greaterThan(quantity) ? quantity : discountQuantity;
+      discountAmount = roundMoneyForCurrency(effective.mul(unitPrice), currency);
+    }
+  }
+
+  const payableAmount = monthGross.sub(discountAmount).lessThan(0)
+    ? new Prisma.Decimal(0)
+    : roundMoneyForCurrency(monthGross.sub(discountAmount), currency);
+
+  return {
+    monthGross,
+    discountAmount,
+    payableAmount,
+  };
 }
 
 function normalizeSearch(value: string) {
@@ -99,6 +156,8 @@ export function MonthlyClosureEditorClient({
   const now = new Date();
   const [step, setStep] = useState<WizardStep>(initialEdit ? "entry" : "select");
   const [filterQuery, setFilterQuery] = useState("");
+  const [entryQuery, setEntryQuery] = useState("");
+  const [showOnlyWithMovement, setShowOnlyWithMovement] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(
     () => new Set((initialEdit?.rows ?? []).map((row) => row.contractItemId)),
   );
@@ -127,6 +186,39 @@ export function MonthlyClosureEditorClient({
     return initial;
   });
   const isReplacingEdp = Boolean(initialEdit);
+
+  const originalEditAllowanceByItem = useMemo(() => {
+    const allowances = new Map<string, { quantity: Prisma.Decimal; amount: Prisma.Decimal }>();
+
+    for (const row of initialEdit?.rows ?? []) {
+      const item = items.find((candidate) => candidate.id === row.contractItemId);
+      const quantity = parseDecimalInput(row.monthQty);
+      const unitPrice = item ? parseDecimalInput(item.unitPriceValue) : null;
+
+      if (!item || !quantity || !unitPrice) {
+        continue;
+      }
+
+      const line = calculateLinePreview(
+        quantity,
+        unitPrice,
+        {
+          monthQty: row.monthQty,
+          discountMode: row.discountMode,
+          discountValue: row.discountValue,
+          note: row.note,
+        },
+        currency,
+      );
+
+      allowances.set(row.contractItemId, {
+        quantity,
+        amount: line.payableAmount,
+      });
+    }
+
+    return allowances;
+  }, [currency, initialEdit?.rows, items]);
 
   const updateRow = useCallback((itemId: string, patch: Partial<RowEdit>) => {
     setRows((prev) => ({
@@ -188,6 +280,10 @@ export function MonthlyClosureEditorClient({
     });
   }, [updateRow]);
 
+  const clearRow = useCallback((itemId: string) => {
+    updateRow(itemId, emptyRow());
+  }, [updateRow]);
+
   const preview = useMemo(() => {
     let gross = new Prisma.Decimal(0);
     let discounts = new Prisma.Decimal(0);
@@ -208,39 +304,83 @@ export function MonthlyClosureEditorClient({
         continue;
       }
 
-      const monthGross = qty.mul(unitPrice);
-      let discountAmount = new Prisma.Decimal(0);
+      const line = calculateLinePreview(qty, unitPrice, row, currency);
 
-      if (row.discountMode === DiscountMode.PERCENTAGE && row.discountValue.trim()) {
-        const pct = parseDecimalInput(row.discountValue.trim());
-        if (pct) {
-          discountAmount = monthGross.mul(pct).div(100);
-        }
-      } else if (row.discountMode === DiscountMode.AMOUNT && row.discountValue.trim()) {
-        const amount = parseDecimalInput(row.discountValue.trim());
-        if (amount) {
-          discountAmount = amount.greaterThan(monthGross) ? monthGross : amount;
-        }
-      } else if (row.discountMode === DiscountMode.QUANTITY && row.discountValue.trim()) {
-        const dq = parseDecimalInput(row.discountValue.trim());
-        if (dq) {
-          const effective = dq.greaterThan(qty) ? qty : dq;
-          discountAmount = effective.mul(unitPrice);
-        }
-      }
-
-      const payable = monthGross.sub(discountAmount).lessThan(0)
-        ? new Prisma.Decimal(0)
-        : monthGross.sub(discountAmount);
-
-      gross = gross.add(monthGross);
-      discounts = discounts.add(discountAmount);
-      net = net.add(payable);
+      gross = gross.add(line.monthGross);
+      discounts = discounts.add(line.discountAmount);
+      net = net.add(line.payableAmount);
       lineCount += 1;
     }
 
     return { gross, discounts, net, lineCount };
-  }, [items, rows, selectedItemsOrdered, step]);
+  }, [currency, items, rows, selectedItemsOrdered, step]);
+
+  const rowValidation = useMemo(() => {
+    const result = new Map<
+      string,
+      {
+        availableQuantity: Prisma.Decimal;
+        availableAmount: Prisma.Decimal;
+        attemptedAmount: Prisma.Decimal;
+        error: string | null;
+      }
+    >();
+
+    for (const item of selectedItemsOrdered) {
+      const row = rows[item.id] ?? emptyRow();
+      const quantity = parseDecimalInput(row.monthQty.trim());
+      const unitPrice = parseDecimalInput(item.unitPriceValue);
+      const remainingQuantity = parseDecimalInput(item.remainingQuantityValue) ?? new Prisma.Decimal(0);
+      const remainingAmount = parseDecimalInput(item.remainingAmountValue) ?? new Prisma.Decimal(0);
+      const editAllowance = originalEditAllowanceByItem.get(item.id);
+      const availableQuantity = remainingQuantity.add(editAllowance?.quantity ?? 0);
+      const availableAmount = remainingAmount.add(editAllowance?.amount ?? 0);
+      let attemptedAmount = new Prisma.Decimal(0);
+      let error: string | null = null;
+
+      if (quantity && unitPrice) {
+        const line = calculateLinePreview(quantity, unitPrice, row, currency);
+        attemptedAmount = line.payableAmount;
+
+        if (quantity.greaterThan(availableQuantity)) {
+          error = `La cantidad supera el saldo disponible (${formatQuantityPreview(availableQuantity)}).`;
+        } else if (attemptedAmount.greaterThan(availableAmount)) {
+          error = `El monto neto supera el saldo disponible (${formatMoneyPreview(availableAmount, currency)}).`;
+        }
+      }
+
+      result.set(item.id, {
+        availableQuantity,
+        availableAmount,
+        attemptedAmount,
+        error,
+      });
+    }
+
+    return result;
+  }, [currency, originalEditAllowanceByItem, rows, selectedItemsOrdered]);
+
+  const rowErrors = useMemo(
+    () =>
+      selectedItemsOrdered
+        .map((item) => {
+          const error = rowValidation.get(item.id)?.error;
+          return error ? `${item.itemNumber}: ${error}` : null;
+        })
+        .filter((error): error is string => Boolean(error)),
+    [rowValidation, selectedItemsOrdered],
+  );
+  const hasBlockingErrors = rowErrors.length > 0;
+
+  const entryItems = useMemo(
+    () =>
+      selectedItemsOrdered.filter((item) => {
+        const row = rows[item.id] ?? emptyRow();
+        const hasMovement = Boolean(row.monthQty.trim());
+        return itemMatchesQuery(item, entryQuery) && (!showOnlyWithMovement || hasMovement);
+      }),
+    [entryQuery, rows, selectedItemsOrdered, showOnlyWithMovement],
+  );
 
   function goToEntry() {
     setSelectionError(null);
@@ -261,6 +401,13 @@ export function MonthlyClosureEditorClient({
         setClientError(
           `Indica cantidad del mes para todas las partidas elegidas (falta ${item.itemNumber} · ${item.itemCode}).`,
         );
+        return;
+      }
+
+      const validation = rowValidation.get(item.id);
+      if (validation?.error) {
+        e.preventDefault();
+        setClientError(`${item.itemNumber} · ${item.itemCode}: ${validation.error}`);
         return;
       }
     }
@@ -337,20 +484,42 @@ export function MonthlyClosureEditorClient({
     filteredIds.length > 0 && filteredIds.every((id) => selectedIds.has(id));
 
   return (
-    <article className="rounded-[2rem] border border-slate-200 bg-white p-7 shadow-[0_20px_50px_rgba(15,23,42,0.06)]">
-      <h2 className="text-2xl font-semibold text-slate-950">
-        {isReplacingEdp ? "Reemplazo del Estado de Pago" : "Registrar estado de pago"}
-      </h2>
-      <p className="mt-2 text-sm leading-7 text-slate-600">
-        {isReplacingEdp
-          ? "Ajusta las partidas incluidas, cantidades, descuentos y notas del EDP seleccionado."
-          : step === "select"
-            ? "Elige las partidas que tendran movimiento en este EP. En el siguiente paso ingresaras cantidades y descuentos solo para ellas."
-            : "Completa periodo, montos y descuentos. Solo se envian las partidas que elegiste en el paso anterior."}
-      </p>
+    <article className="rounded-[1.5rem] border border-slate-200 bg-white shadow-[0_20px_50px_rgba(15,23,42,0.06)]">
+      <header className="border-b border-slate-100 px-5 py-5 sm:px-7">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-800">
+              {isReplacingEdp ? "Reemplazo de cierre mensual" : "Nuevo cierre mensual"}
+            </p>
+            <h2 className="mt-1 text-2xl font-semibold text-slate-950">
+              {isReplacingEdp ? "Reemplazar Estado de Pago" : "Registrar Estado de Pago"}
+            </h2>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+              {isReplacingEdp
+                ? "Ajusta partidas, cantidades, descuentos y notas del EDP seleccionado."
+                : step === "select"
+                  ? "Elige las partidas con movimiento. Luego ingresaras cantidades y descuentos solo para ellas."
+                  : "Completa los datos del mes y revisa saldos antes de guardar."}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2 text-xs font-medium">
+            <span className="rounded-full bg-slate-100 px-3 py-1.5 text-slate-700">
+              {contractCode}
+            </span>
+            <span className="rounded-full bg-slate-100 px-3 py-1.5 text-slate-700">
+              {currency}
+            </span>
+            <span className="rounded-full bg-teal-50 px-3 py-1.5 text-teal-800">
+              {selectedCount} seleccionadas
+            </span>
+          </div>
+        </div>
+      </header>
+
+      <div className="px-5 py-5 sm:px-7">
       {isReplacingEdp ? (
-        <p className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
-          Esta accion reemplaza completamente el Estado de Pago del periodo. Las partidas quitadas seran eliminadas del cierre.
+        <p className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
+          Este reemplazo actualiza el cierre del mes seleccionado. No afecta snapshots de otros meses.
         </p>
       ) : null}
 
@@ -538,6 +707,8 @@ export function MonthlyClosureEditorClient({
                   <th className="px-3 py-3 text-right">P.U.</th>
                   <th className="px-3 py-3 text-right">Cant. contrato</th>
                   <th className="px-3 py-3 text-right">Avance acum.</th>
+                  <th className="px-3 py-3 text-right">Saldo cant.</th>
+                  <th className="px-3 py-3 text-right">Saldo monto</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 bg-white text-slate-900">
@@ -572,6 +743,12 @@ export function MonthlyClosureEditorClient({
                       </td>
                       <td className="whitespace-nowrap px-3 py-2 text-right text-xs text-slate-600">
                         {item.consumedQuantity}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2 text-right text-xs font-medium text-sky-800">
+                        {item.remainingQuantity}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2 text-right text-xs font-medium text-sky-800">
+                        {item.remainingAmount}
                       </td>
                     </tr>
                   );
@@ -624,7 +801,7 @@ export function MonthlyClosureEditorClient({
           <form
             action="/api/monthly-closures"
             method="post"
-            className="mt-6 space-y-6"
+            className="mt-6 space-y-5"
             onSubmit={handleSubmit}
           >
             <input type="hidden" name="contractId" value={contractId} />
@@ -633,7 +810,11 @@ export function MonthlyClosureEditorClient({
             <input type="hidden" name="closureInputMode" value="grid" />
             <input ref={jsonFieldRef} type="hidden" name="closureRowsJson" defaultValue="" />
 
-            <div className="grid gap-4 md:grid-cols-3">
+            <section
+              aria-label="Cabecera del EDP"
+              className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4"
+            >
+              <div className="grid gap-4 md:grid-cols-3">
               <div className="space-y-2">
                 <label className="block text-sm font-medium text-slate-700" htmlFor="ep-year">
                   Año
@@ -675,9 +856,9 @@ export function MonthlyClosureEditorClient({
                   className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#0f766e] focus:ring-4 focus:ring-[#99f6e4]"
                 />
               </div>
-            </div>
+              </div>
 
-            <div className="space-y-2">
+              <div className="mt-4 space-y-2">
               <label className="block text-sm font-medium text-slate-700" htmlFor="ep-summary">
                 Resumen u observaciones
               </label>
@@ -689,12 +870,26 @@ export function MonthlyClosureEditorClient({
                 placeholder="Observaciones generales del cierre"
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#0f766e] focus:ring-4 focus:ring-[#99f6e4]"
               />
-            </div>
+              </div>
+            </section>
 
             {clientError ? (
               <p className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
                 {clientError}
               </p>
+            ) : null}
+
+            {hasBlockingErrors ? (
+              <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3">
+                <p className="text-sm font-semibold text-red-900">
+                  Revisa {rowErrors.length} partida{rowErrors.length === 1 ? "" : "s"} antes de guardar.
+                </p>
+                <ul className="mt-2 space-y-1 text-xs leading-5 text-red-800">
+                  {rowErrors.slice(0, 4).map((error) => (
+                    <li key={error}>{error}</li>
+                  ))}
+                </ul>
+              </div>
             ) : null}
 
             <section
@@ -730,48 +925,85 @@ export function MonthlyClosureEditorClient({
               </p>
             </section>
 
+            <section className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 lg:flex-row lg:items-end lg:justify-between">
+              <div className="min-w-0 flex-1 space-y-2">
+                <label className="block text-sm font-medium text-slate-700" htmlFor="entry-filter">
+                  Buscar partidas seleccionadas
+                </label>
+                <input
+                  id="entry-filter"
+                  type="search"
+                  value={entryQuery}
+                  onChange={(e) => setEntryQuery(e.target.value)}
+                  placeholder="Codigo, item o descripcion"
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#0f766e] focus:ring-4 focus:ring-[#99f6e4]"
+                />
+              </div>
+              <label className="flex cursor-pointer items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-medium text-slate-800">
+                <input
+                  type="checkbox"
+                  checked={showOnlyWithMovement}
+                  onChange={(e) => setShowOnlyWithMovement(e.target.checked)}
+                  className="size-4 rounded border-slate-300 text-[#0f766e] focus:ring-[#99f6e4]"
+                />
+                Solo con movimiento
+              </label>
+            </section>
+
             <div className="overflow-x-auto rounded-2xl border border-slate-200">
-              <table className="min-w-[78rem] w-full border-collapse text-left text-sm">
+              <table className="min-w-[74rem] w-full border-collapse text-left text-sm">
                 <thead className="sticky top-0 z-10 bg-slate-100 text-xs font-semibold uppercase tracking-wide text-slate-600">
                   <tr>
                     <th className="px-3 py-3">Item</th>
                     <th className="px-3 py-3">Descripción</th>
                     <th className="px-3 py-3">UM</th>
-                    <th className="px-3 py-3 text-right">P.U.</th>
-                    <th className="px-3 py-3 text-right">Cant. contrato</th>
                     <th className="px-3 py-3 text-right">Avance acum.</th>
+                    <th className="px-3 py-3 text-right">Saldo disp.</th>
+                    <th className="px-3 py-3 text-right">Saldo monto</th>
                     <th className="px-3 py-3 text-right">Cant. mes</th>
+                    <th className="px-3 py-3 text-right">Neto mes</th>
                     <th className="px-3 py-3">Nota</th>
                     <th className="px-3 py-3">Descuento especial</th>
-                    {isReplacingEdp ? (
-                      <th className="px-3 py-3 text-right">Accion</th>
-                    ) : null}
+                    <th className="px-3 py-3 text-right">Accion</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white text-slate-900">
-                  {selectedItemsOrdered.map((item) => {
+                  {entryItems.map((item) => {
                     const row = rows[item.id] ?? emptyRow();
                     const hasDiscount = row.discountMode !== DiscountMode.NONE;
+                    const validation = rowValidation.get(item.id);
                     return (
-                      <tr key={item.id} className="align-top hover:bg-slate-50/80">
+                      <tr
+                        key={item.id}
+                        className={`align-top hover:bg-slate-50/80 ${
+                          validation?.error ? "bg-red-50/70" : ""
+                        }`}
+                      >
                         <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">
                           <span className="font-semibold text-slate-950">{item.itemNumber}</span>
                           <span className="block text-slate-500">{item.itemCode}</span>
                         </td>
                         <td className="max-w-[14rem] px-3 py-2 text-xs leading-snug text-slate-700">
                           {item.description}
+                          <span className="mt-1 block text-[11px] text-slate-500">
+                            P.U. {item.unitPriceValue} · Vigente {item.originalQuantityValue}
+                          </span>
                         </td>
                         <td className="whitespace-nowrap px-3 py-2 text-xs text-slate-600">
                           {item.unit ?? "—"}
                         </td>
                         <td className="whitespace-nowrap px-3 py-2 text-right text-xs text-slate-600">
-                          {item.unitPriceValue}
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-2 text-right text-xs text-slate-600">
-                          {item.originalQuantityValue}
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-2 text-right text-xs text-slate-600">
                           {item.consumedQuantity}
+                        </td>
+                        <td className="whitespace-nowrap px-3 py-2 text-right text-xs font-medium text-sky-800">
+                          {validation
+                            ? formatQuantityPreview(validation.availableQuantity)
+                            : item.remainingQuantity}
+                        </td>
+                        <td className="whitespace-nowrap px-3 py-2 text-right text-xs font-medium text-sky-800">
+                          {validation
+                            ? formatMoneyPreview(validation.availableAmount, currency)
+                            : item.remainingAmount}
                         </td>
                         <td className="px-2 py-2">
                           <input
@@ -779,8 +1011,20 @@ export function MonthlyClosureEditorClient({
                             value={row.monthQty}
                             onChange={(e) => updateRow(item.id, { monthQty: e.target.value })}
                             placeholder="0"
-                            className="w-full min-w-[5.5rem] rounded-xl border border-slate-200 px-2 py-1.5 text-right font-mono text-xs outline-none focus:border-[#0f766e]"
+                            className={`w-full min-w-[5.5rem] rounded-xl border px-2 py-1.5 text-right font-mono text-xs outline-none focus:border-[#0f766e] ${
+                              validation?.error ? "border-red-400 bg-red-50" : "border-slate-200"
+                            }`}
                           />
+                          {validation?.error ? (
+                            <p className="mt-1 max-w-[11rem] text-[11px] leading-4 text-red-700">
+                              {validation.error}
+                            </p>
+                          ) : null}
+                        </td>
+                        <td className="whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-teal-800">
+                          {validation
+                            ? formatMoneyPreview(validation.attemptedAmount, currency)
+                            : formatMoneyPreview(new Prisma.Decimal(0), currency)}
                         </td>
                         <td className="px-2 py-2">
                           <input
@@ -851,23 +1095,38 @@ export function MonthlyClosureEditorClient({
                             ) : null}
                           </div>
                         </td>
-                        {isReplacingEdp ? (
-                          <td className="px-2 py-2 text-right">
+                        <td className="px-2 py-2 text-right">
+                          <div className="flex flex-col gap-2">
                             <button
                               type="button"
-                              onClick={() => removeSelectedItem(item.id)}
-                              className="rounded-full border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-700 transition hover:border-red-500 hover:text-red-800"
+                              onClick={() => clearRow(item.id)}
+                              className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-500 hover:text-slate-900"
                             >
-                              Quitar
+                              Limpiar
                             </button>
-                          </td>
-                        ) : null}
+                            {isReplacingEdp ? (
+                              <button
+                                type="button"
+                                onClick={() => removeSelectedItem(item.id)}
+                                className="rounded-full border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-700 transition hover:border-red-500 hover:text-red-800"
+                              >
+                                Quitar
+                              </button>
+                            ) : null}
+                          </div>
+                        </td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
             </div>
+
+            {entryItems.length === 0 ? (
+              <p className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-center text-sm text-slate-600">
+                No hay partidas seleccionadas que coincidan con el filtro actual.
+              </p>
+            ) : null}
 
             <div className="flex flex-wrap gap-3">
               {isReplacingEdp ? (
@@ -884,7 +1143,8 @@ export function MonthlyClosureEditorClient({
               ) : null}
               <button
                 type="submit"
-                className="rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+                disabled={hasBlockingErrors}
+                className="rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
               >
                 {isReplacingEdp ? "Reemplazar EDP" : "Guardar estado de pago"}
               </button>
@@ -985,6 +1245,7 @@ export function MonthlyClosureEditorClient({
           </details>
         </>
       ) : null}
+      </div>
     </article>
   );
 }

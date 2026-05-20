@@ -3,7 +3,7 @@ import type { Prisma } from "@prisma/client";
 import * as XLSX from "xlsx";
 import { getCurrentUser } from "@/lib/auth";
 import { getItemTaxonomyOptions } from "@/lib/item-taxonomy";
-import { decimalToFixedString } from "@/lib/numeric";
+import { decimalToFixedString, formatMoneyExport } from "@/lib/numeric";
 import { getPrisma } from "@/lib/prisma";
 
 type ContractExportRecord = Prisma.ContractGetPayload<{
@@ -118,8 +118,8 @@ export async function GET(
       descripcion: item.description,
       unidad: item.unit ?? "",
       cantidad: decimalToFixedString(item.originalQuantity, 3),
-      precioUnitario: decimalToFixedString(item.unitPrice, 2),
-      montoBase: decimalToFixedString(item.originalAmount, 2),
+      precioUnitario: formatMoneyExport(item.unitPrice, contract.currency),
+      montoBase: formatMoneyExport(item.originalAmount, contract.currency),
     };
   });
 

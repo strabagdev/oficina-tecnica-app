@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 type FamilyOption = {
   id: string;
@@ -50,23 +50,16 @@ export function ItemTaxonomyFields({
     () => subfamilies.filter((subfamily) => subfamily.familyId === familyId),
     [familyId, subfamilies],
   );
+  const selectedSubfamilyId = availableSubfamilies.some(
+    (subfamily) => subfamily.id === subfamilyId,
+  )
+    ? subfamilyId
+    : "";
   const availableGroups = useMemo(
-    () => groups.filter((group) => group.subfamilyId === subfamilyId),
-    [groupId, groups, subfamilyId],
+    () => groups.filter((group) => group.subfamilyId === selectedSubfamilyId),
+    [groups, selectedSubfamilyId],
   );
-
-  useEffect(() => {
-    if (subfamilyId && !availableSubfamilies.some((subfamily) => subfamily.id === subfamilyId)) {
-      setSubfamilyId("");
-      setGroupId("");
-    }
-  }, [availableSubfamilies, subfamilyId]);
-
-  useEffect(() => {
-    if (groupId && !availableGroups.some((group) => group.id === groupId)) {
-      setGroupId("");
-    }
-  }, [availableGroups, groupId]);
+  const selectedGroupId = availableGroups.some((group) => group.id === groupId) ? groupId : "";
 
   return (
     <div className="grid gap-3 md:grid-cols-3">
@@ -102,7 +95,7 @@ export function ItemTaxonomyFields({
         <select
           id={`${idPrefix}-subfamily`}
           name="subfamilyId"
-          value={subfamilyId}
+          value={selectedSubfamilyId}
           onChange={(event) => {
             setSubfamilyId(event.target.value);
             setGroupId("");
@@ -127,9 +120,9 @@ export function ItemTaxonomyFields({
         <select
           id={`${idPrefix}-group`}
           name="groupId"
-          value={groupId}
+          value={selectedGroupId}
           onChange={(event) => setGroupId(event.target.value)}
-          disabled={!subfamilyId}
+          disabled={!selectedSubfamilyId}
           className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition disabled:cursor-not-allowed disabled:bg-slate-50 focus:border-[#0f766e] focus:ring-4 focus:ring-[#99f6e4]"
         >
           <option value="">Sin grupo</option>

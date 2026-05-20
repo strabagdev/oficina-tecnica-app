@@ -1,9 +1,24 @@
 import "server-only";
 
-import { ChangeStatus, ChangeType, ContractStatus, DiscountMode, Prisma } from "@prisma/client";
+import {
+  ChangeStatus,
+  ChangeType,
+  ContractStatus,
+  DiscountMode,
+  MonthlyClosureStatus,
+  Prisma,
+} from "@prisma/client";
 import * as XLSX from "xlsx";
 import { getItemTaxonomyOptions } from "@/lib/item-taxonomy";
-import { parseDecimalInput } from "@/lib/numeric";
+import {
+  formatCurrencyDisplay,
+  formatDecimalDisplay,
+  getMoneyScaleForCurrency,
+  parseDecimalInput,
+  parseMoneyDecimal,
+  parseQuantityDecimal,
+  roundMoneyForCurrency,
+} from "@/lib/numeric";
 import { getPrisma } from "@/lib/prisma";
 import { getMeasurementUnitOptions } from "@/lib/measurement-units";
 
@@ -164,14 +179,12 @@ function parseDecimal(value: string) {
   return parseDecimalInput(value);
 }
 
-function parseOptionalDecimal(value: string) {
-  const trimmed = value.trim();
+function parseQuantity(value: string) {
+  return parseQuantityDecimal(value);
+}
 
-  if (!trimmed) {
-    return null;
-  }
-
-  return parseDecimal(trimmed);
+function parseUnitPrice(value: string) {
+  return parseMoneyDecimal(value, { scale: 2 });
 }
 
 function resolveChangeType(quantityDelta: Prisma.Decimal, amountDelta: Prisma.Decimal) {
@@ -189,7 +202,10 @@ function resolveChangeType(quantityDelta: Prisma.Decimal, amountDelta: Prisma.De
   return ChangeType.AMOUNT;
 }
 
-function parseContractChangeLines(source: string): { error: string } | { lines: ParsedContractChangeLine[] } {
+function parseContractChangeLines(
+  source: string,
+  currency: string,
+): { error: string } | { lines: ParsedContractChangeLine[] } {
   const rawLines = source
     .split("\n")
     .map((line) => line.trim())
@@ -217,7 +233,7 @@ function parseContractChangeLines(source: string): { error: string } | { lines: 
         };
       }
 
-      const quantityDelta = parseOptionalDecimal(quantityDeltaRaw);
+      const quantityDelta = quantityDeltaRaw ? parseQuantity(quantityDeltaRaw) : null;
 
       if (quantityDeltaRaw && !quantityDelta) {
         return {
@@ -225,7 +241,9 @@ function parseContractChangeLines(source: string): { error: string } | { lines: 
         };
       }
 
-      const amountDelta = parseOptionalDecimal(amountDeltaRaw);
+      const amountDelta = amountDeltaRaw
+        ? parseMoneyDecimal(amountDeltaRaw, { scale: getMoneyScaleForCurrency(currency) })
+        : null;
 
       if (amountDeltaRaw && !amountDelta) {
         return {
@@ -261,8 +279,10 @@ function parseContractChangeLines(source: string): { error: string } | { lines: 
         };
       }
 
-      const quantityDelta = parseDecimal(quantityRaw);
-      const unitPrice = parseDecimal(unitPriceRaw);
+      const quantityDelta = parseQuantity(quantityRaw);
+      const unitPrice = parseMoneyDecimal(unitPriceRaw, {
+        scale: getMoneyScaleForCurrency(currency),
+      });
 
       if (!quantityDelta || !unitPrice) {
         return {
@@ -276,7 +296,9 @@ function parseContractChangeLines(source: string): { error: string } | { lines: 
         };
       }
 
-      const amountDelta = amountRaw ? parseDecimal(amountRaw) : quantityDelta.mul(unitPrice);
+      const amountDelta = amountRaw
+        ? parseMoneyDecimal(amountRaw, { scale: getMoneyScaleForCurrency(currency) })
+        : roundMoneyForCurrency(quantityDelta.mul(unitPrice), currency);
 
       if (!amountDelta) {
         return {
@@ -338,6 +360,7 @@ function normalizeItemValues(
   unit: string,
   quantity: string,
   unitPrice: string,
+  currency: string,
 ): { error: string } | { item: NormalizedItemInput } {
   if (!itemNumber || !description || !quantity || !unitPrice) {
     return {
@@ -348,8 +371,8 @@ function normalizeItemValues(
 
   const itemCode = itemNumber;
 
-  const quantityValue = parseDecimal(quantity);
-  const unitPriceValue = parseDecimal(unitPrice);
+  const quantityValue = parseQuantity(quantity);
+  const unitPriceValue = parseUnitPrice(unitPrice);
 
   if (!quantityValue || !unitPriceValue) {
     return {
@@ -368,7 +391,7 @@ function normalizeItemValues(
       unit: unit.trim() || null,
       quantity: quantityValue,
       unitPrice: unitPriceValue,
-      originalAmount: quantityValue.mul(unitPriceValue),
+      originalAmount: roundMoneyForCurrency(quantityValue.mul(unitPriceValue), currency),
     },
   };
 }
@@ -680,6 +703,7 @@ async function validateContractItemsImport(
     select: {
       id: true,
       code: true,
+      currency: true,
       items: {
         select: {
           id: true,
@@ -709,7 +733,9 @@ async function validateContractItemsImport(
     }
 
     rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[sheetName], {
+      blankrows: false,
       defval: "",
+      raw: false,
     });
   } catch {
     return {
@@ -810,6 +836,7 @@ async function validateContractItemsImport(
       unit,
       quantity,
       unitPrice,
+      contract.currency,
     );
 
     if ("error" in normalized) {
@@ -1144,6 +1171,7 @@ export async function createContractItemsFromForm(
     select: {
       id: true,
       code: true,
+      currency: true,
     },
   });
 
@@ -1172,6 +1200,7 @@ export async function createContractItemsFromForm(
     unit,
     quantity,
     unitPrice,
+    contract.currency,
   );
 
   if ("error" in normalized) {
@@ -1232,6 +1261,22 @@ export async function updateContractItemFromForm(
     };
   }
 
+  const prisma = getPrisma();
+  const contract = await prisma.contract.findUnique({
+    where: {
+      id: contractId,
+    },
+    select: {
+      currency: true,
+    },
+  });
+
+  if (!contract) {
+    return {
+      error: "No encontre el contrato seleccionado.",
+    };
+  }
+
   const normalized = normalizeItemValues(
     taxonomy.family,
     taxonomy.subfamily,
@@ -1241,6 +1286,7 @@ export async function updateContractItemFromForm(
     unit,
     quantity,
     unitPrice,
+    contract.currency,
   );
 
   if ("error" in normalized) {
@@ -1252,8 +1298,6 @@ export async function updateContractItemFromForm(
   if (unitValidation) {
     return { error: unitValidation };
   }
-
-  const prisma = getPrisma();
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -1469,6 +1513,8 @@ export async function createMonthlyClosureFromForm(
           id: true,
           year: true,
           month: true,
+          status: true,
+          version: true,
         },
       })
     : null;
@@ -1479,6 +1525,12 @@ export async function createMonthlyClosureFromForm(
         error: "No pude identificar el EDP que intentas reemplazar. Refresca la pagina e intenta nuevamente.",
       };
     }
+
+    if (closureToReplace.status !== MonthlyClosureStatus.CLOSED) {
+      return {
+        error: "Solo puedes reemplazar un EDP oficial.",
+      };
+    }
   }
 
   const targetClosure = await prisma.monthlyClosure.findFirst({
@@ -1486,13 +1538,21 @@ export async function createMonthlyClosureFromForm(
       contractId,
       year,
       month,
+      status: MonthlyClosureStatus.CLOSED,
     },
     select: {
       id: true,
       year: true,
       month: true,
+      version: true,
     },
   });
+
+  if (!isReplacement && targetClosure) {
+    return {
+      error: "Ya existe un EDP oficial para ese periodo. Usa la accion Reemplazar desde el historial.",
+    };
+  }
 
   if (isReplacement && targetClosure && targetClosure.id !== closureId) {
     return {
@@ -1504,6 +1564,7 @@ export async function createMonthlyClosureFromForm(
     const newerThanTargetExists = await prisma.monthlyClosure.findFirst({
       where: {
         contractId,
+        status: MonthlyClosureStatus.CLOSED,
         id: {
           not: closureId,
         },
@@ -1540,6 +1601,7 @@ export async function createMonthlyClosureFromForm(
     const newerClosureExists = await prisma.monthlyClosure.findFirst({
       where: {
         contractId,
+        status: MonthlyClosureStatus.CLOSED,
         id: {
           not: referenceClosure.id,
         },
@@ -1608,7 +1670,10 @@ export async function createMonthlyClosureFromForm(
       };
     }
 
-    const monthGrossAmount = quantityConsumed.mul(contractItem.unitPrice);
+    const monthGrossAmount = roundMoneyForCurrency(
+      quantityConsumed.mul(contractItem.unitPrice),
+      contract.currency,
+    );
     let discountPercent: Prisma.Decimal | null = null;
     let discountQuantity: Prisma.Decimal | null = null;
     let discountAmount = new Prisma.Decimal(0);
@@ -1623,11 +1688,16 @@ export async function createMonthlyClosureFromForm(
         };
       }
 
-      discountAmount = monthGrossAmount.mul(discountPercent).div(100);
+      discountAmount = roundMoneyForCurrency(
+        monthGrossAmount.mul(discountPercent).div(100),
+        contract.currency,
+      );
     }
 
     if (row.discountMode === DiscountMode.AMOUNT && row.discountValue) {
-      const parsedDiscountAmount = parseDecimal(row.discountValue);
+      const parsedDiscountAmount = parseMoneyDecimal(row.discountValue, {
+        scale: getMoneyScaleForCurrency(contract.currency),
+      });
 
       if (!parsedDiscountAmount) {
         return {
@@ -1654,12 +1724,15 @@ export async function createMonthlyClosureFromForm(
         : discountQuantity;
 
       payableQuantity = quantityConsumed.sub(effectiveDiscountQuantity);
-      discountAmount = effectiveDiscountQuantity.mul(contractItem.unitPrice);
+      discountAmount = roundMoneyForCurrency(
+        effectiveDiscountQuantity.mul(contractItem.unitPrice),
+        contract.currency,
+      );
     }
 
     const payableAmount = monthGrossAmount.sub(discountAmount).lessThan(0)
       ? new Prisma.Decimal(0)
-      : monthGrossAmount.sub(discountAmount);
+      : roundMoneyForCurrency(monthGrossAmount.sub(discountAmount), contract.currency);
     const contractQuantity = contractItem.currentQuantity ?? contractItem.originalQuantity;
     const contractAmount = contractItem.currentAmount ?? contractItem.originalAmount;
 
@@ -1685,14 +1758,22 @@ export async function createMonthlyClosureFromForm(
     const projectedConsumedAmount = consumedToDateAmount.add(payableAmount);
 
     if (projectedConsumedQuantity.greaterThan(contractQuantity)) {
+      const availableQuantity = contractQuantity.sub(consumedToDateQuantity);
       return {
-        error: `La partida ${contractItem.itemNumber} supera la cantidad vigente disponible.`,
+        error:
+          `La partida ${contractItem.itemNumber} supera la cantidad vigente disponible. ` +
+          `Disponible: ${formatDecimalDisplay(availableQuantity, { scale: 3, trimTrailingZeros: true })}; ` +
+          `intentado este EDP: ${formatDecimalDisplay(quantityConsumed, { scale: 3, trimTrailingZeros: true })}.`,
       };
     }
 
     if (projectedConsumedAmount.greaterThan(contractAmount)) {
+      const availableAmount = contractAmount.sub(consumedToDateAmount);
       return {
-        error: `La partida ${contractItem.itemNumber} supera el monto vigente disponible.`,
+        error:
+          `La partida ${contractItem.itemNumber} supera el monto vigente disponible. ` +
+          `Disponible: ${formatCurrencyDisplay(availableAmount)}; ` +
+          `neto intentado este EDP: ${formatCurrencyDisplay(payableAmount)}.`,
       };
     }
 
@@ -1836,27 +1917,27 @@ export async function createMonthlyClosureFromForm(
         });
       }
 
-      if (closureToReplace) {
-        await tx.monthlyClosure.delete({
-          where: {
-            id: closureToReplace.id,
-          },
-        });
-      } else {
-        await tx.monthlyClosure.deleteMany({
-          where: {
-            contractId,
-            year,
-            month,
-          },
-        });
-      }
+      const versionAggregate = await tx.monthlyClosure.aggregate({
+        where: {
+          contractId,
+          year,
+          month,
+        },
+        _max: {
+          version: true,
+        },
+      });
+      const nextVersion = (versionAggregate._max.version ?? 0) + 1;
 
-      await tx.monthlyClosure.create({
+      const newClosure = await tx.monthlyClosure.create({
         data: {
           contractId,
           year,
           month,
+          status: MonthlyClosureStatus.CLOSED,
+          version: nextVersion,
+          approvedAt: new Date(),
+          sourceClosureId: closureToReplace?.id ?? null,
           statementNumber: resolvedStatementNumber,
           summaryNote: summaryNote || null,
           grossAmount,
@@ -1867,6 +1948,19 @@ export async function createMonthlyClosureFromForm(
           },
         },
       });
+
+      if (closureToReplace) {
+        await tx.monthlyClosure.update({
+          where: {
+            id: closureToReplace.id,
+          },
+          data: {
+            status: MonthlyClosureStatus.REPLACED,
+            replacedAt: new Date(),
+            replacedById: newClosure.id,
+          },
+        });
+      }
     });
   } catch (error) {
     console.error(error);
@@ -1918,6 +2012,7 @@ export async function deleteMonthlyClosureFromForm(
     where: {
       id: closureId,
       contractId,
+      status: MonthlyClosureStatus.CLOSED,
     },
     select: {
       id: true,
@@ -1926,6 +2021,7 @@ export async function deleteMonthlyClosureFromForm(
       contract: {
         select: {
           code: true,
+          currency: true,
         },
       },
     },
@@ -1940,6 +2036,7 @@ export async function deleteMonthlyClosureFromForm(
   const newerClosureExists = await prisma.monthlyClosure.findFirst({
     where: {
       contractId,
+      status: MonthlyClosureStatus.CLOSED,
       OR: [
         {
           year: {
@@ -2019,12 +2116,6 @@ export async function createContractChangeFromForm(
     };
   }
 
-  const parsedLines = parseContractChangeLines(linesSource);
-
-  if ("error" in parsedLines) {
-    return parsedLines;
-  }
-
   const prisma = getPrisma();
   const contract = await prisma.contract.findUnique({
     where: {
@@ -2041,6 +2132,12 @@ export async function createContractChangeFromForm(
     };
   }
 
+  const parsedLines = parseContractChangeLines(linesSource, contract.currency);
+
+  if ("error" in parsedLines) {
+    return parsedLines;
+  }
+
   const itemsByNumber = new Map(contract.items.map((item) => [item.itemNumber, item]));
   const seenNewItemNumbers = new Set<string>();
   let quantityDeltaTotal = new Prisma.Decimal(0);
@@ -2050,7 +2147,10 @@ export async function createContractChangeFromForm(
 
   for (const line of parsedLines.lines) {
     quantityDeltaTotal = quantityDeltaTotal.add(line.quantityDelta ?? new Prisma.Decimal(0));
-    amountDeltaTotal = amountDeltaTotal.add(line.amountDelta);
+    amountDeltaTotal = roundMoneyForCurrency(
+      amountDeltaTotal.add(line.amountDelta),
+      contract.currency,
+    );
 
     if (line.createsNewItem) {
       if (itemsByNumber.has(line.itemNumber) || seenNewItemNumbers.has(line.itemNumber)) {
@@ -2093,7 +2193,7 @@ export async function createContractChangeFromForm(
 
     const resolvedAmountDelta =
       line.amountDelta.isZero() && line.quantityDelta
-        ? line.quantityDelta.mul(item.unitPrice)
+        ? roundMoneyForCurrency(line.quantityDelta.mul(item.unitPrice), contract.currency)
         : line.amountDelta;
 
     if ((line.quantityDelta?.isZero() ?? true) && resolvedAmountDelta.isZero()) {
@@ -2102,7 +2202,10 @@ export async function createContractChangeFromForm(
       };
     }
 
-    amountDeltaTotal = amountDeltaTotal.sub(line.amountDelta).add(resolvedAmountDelta);
+    amountDeltaTotal = roundMoneyForCurrency(
+      amountDeltaTotal.sub(line.amountDelta).add(resolvedAmountDelta),
+      contract.currency,
+    );
 
     lineRows.push({
       contractItemId: item.id,
@@ -2120,6 +2223,7 @@ export async function createContractChangeFromForm(
     });
   }
 
+  amountDeltaTotal = roundMoneyForCurrency(amountDeltaTotal, contract.currency);
   const changeType = resolveChangeType(quantityDeltaTotal, amountDeltaTotal);
 
   try {
@@ -2271,6 +2375,7 @@ async function applyContractChange(changeId: string): Promise<MutationResult> {
       contract: {
         select: {
           code: true,
+          currency: true,
         },
       },
       lines: true,
@@ -2324,8 +2429,9 @@ async function applyContractChange(changeId: string): Promise<MutationResult> {
 
           const quantity = line.quantityDelta ?? new Prisma.Decimal(0);
           const unitPrice = line.unitPrice ?? new Prisma.Decimal(0);
+          const amountDelta = roundMoneyForCurrency(line.amountDelta, change.contract.currency);
 
-          if (quantity.lessThanOrEqualTo(0) || line.amountDelta.lessThanOrEqualTo(0)) {
+          if (quantity.lessThanOrEqualTo(0) || amountDelta.lessThanOrEqualTo(0)) {
             throw new Error(`La partida nueva ${line.itemNumber} debe tener cantidad y monto positivos.`);
           }
 
@@ -2341,9 +2447,9 @@ async function applyContractChange(changeId: string): Promise<MutationResult> {
               unit: line.unit,
               originalQuantity: quantity,
               unitPrice,
-              originalAmount: line.amountDelta,
+              originalAmount: amountDelta,
               currentQuantity: quantity,
-              currentAmount: line.amountDelta,
+              currentAmount: amountDelta,
             },
           });
 
@@ -2393,7 +2499,11 @@ async function applyContractChange(changeId: string): Promise<MutationResult> {
         const beforeQuantity = item.currentQuantity ?? item.originalQuantity;
         const beforeAmount = item.currentAmount ?? item.originalAmount;
         const afterQuantity = beforeQuantity.add(quantityDelta);
-        const afterAmount = beforeAmount.add(line.amountDelta);
+        const amountDelta = roundMoneyForCurrency(line.amountDelta, change.contract.currency);
+        const afterAmount = roundMoneyForCurrency(
+          beforeAmount.add(amountDelta),
+          change.contract.currency,
+        );
 
         if (afterQuantity.lessThan(consumedQuantity)) {
           throw new Error(

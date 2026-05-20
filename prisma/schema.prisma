@@ -44,6 +44,11 @@ enum DiscountMode {
   QUANTITY
 }
 
+enum MonthlyClosureStatus {
+  CLOSED
+  REPLACED
+}
+
 model User {
   id           String    @id @default(cuid())
   authUserId   String?   @unique
@@ -203,6 +208,12 @@ model MonthlyClosure {
   year              Int
   month             Int
   statementNumber   String?
+  status            MonthlyClosureStatus       @default(CLOSED)
+  version           Int                        @default(1)
+  replacedById      String?
+  replacedAt        DateTime?
+  approvedAt        DateTime?
+  sourceClosureId   String?
   closedAt          DateTime                   @default(now())
   summaryNote       String?
   grossAmount       Decimal?                   @db.Decimal(18, 2)
@@ -211,10 +222,17 @@ model MonthlyClosure {
   createdAt         DateTime                   @default(now())
   updatedAt         DateTime                   @updatedAt
   contract          Contract                   @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  replacedBy        MonthlyClosure?            @relation("ClosureReplacement", fields: [replacedById], references: [id], onDelete: SetNull)
+  replacementFor    MonthlyClosure[]           @relation("ClosureReplacement")
+  sourceClosure     MonthlyClosure?            @relation("ClosureSource", fields: [sourceClosureId], references: [id], onDelete: SetNull)
+  derivedClosures   MonthlyClosure[]           @relation("ClosureSource")
   itemSnapshots     MonthlyClosureItemSnapshot[]
 
-  @@unique([contractId, year, month])
+  @@unique([contractId, year, month, version])
   @@index([year, month])
+  @@index([status])
+  @@index([replacedById])
+  @@index([sourceClosureId])
 }
 
 model MonthlyClosureItemSnapshot {

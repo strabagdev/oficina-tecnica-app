@@ -31,7 +31,7 @@ export default async function AdminUsersPage({
       user={user}
       pathname="/admin/users"
       title="Usuarios y permisos"
-      description="Aprueba solicitudes de acceso, crea cuentas directas en Supabase Auth y administra roles o bloqueos internos."
+      description="Aprueba solicitudes de acceso, crea cuentas internas y administra roles o bloqueos."
     >
       <FlashBanner type={flashType} message={flashMessage} />
 
@@ -43,7 +43,7 @@ export default async function AdminUsersPage({
               Crear usuario inmediato
             </h2>
             <p className="mt-2 text-sm leading-7 text-slate-600">
-              Crea nuevas cuentas ya aprobadas en Supabase Auth y define si tendran perfil de administrador o solo visualizacion dentro de la app.
+              Crea nuevas cuentas ya aprobadas y define si tendran perfil de administrador o solo visualizacion dentro de la app.
             </p>
           </div>
 
@@ -101,9 +101,6 @@ export default async function AdminUsersPage({
                       }`}
                     >
                       {account.active ? "Activo" : "Inactivo"}
-                    </span>
-                    <span className="rounded-full bg-white px-3 py-1 text-slate-600">
-                      {account.authUserId ? "Supabase vinculado" : "Pendiente de vincular"}
                     </span>
                     <span
                       className={`rounded-full px-3 py-1 ${
@@ -178,7 +175,7 @@ export default async function AdminUsersPage({
                     </label>
                     <p className="mt-3 text-sm leading-7 text-slate-600">
                       {account.active
-                        ? "Desactivar cuenta para bloquear su acceso a la app, aunque exista en Supabase Auth."
+                        ? "Desactivar cuenta para bloquear su acceso a la app."
                         : "Reactivar cuenta para permitir ingreso nuevamente."}
                     </p>
                     <button
@@ -205,7 +202,7 @@ export default async function AdminUsersPage({
                       type="submit"
                       className="mt-3 w-full rounded-full border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-900 hover:text-slate-950"
                     >
-                      Actualizar clave en Supabase
+                      Actualizar clave
                     </button>
                   </form>
                 </div>

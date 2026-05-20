@@ -74,8 +74,8 @@ export default async function ContractDetailPage({
             <TextLinkButton href={`/contracts/${id}/changes`} variant="secondary">
               Ver NOC
             </TextLinkButton>
-            <TextLinkButton href="#" variant="disabled">
-              Forecast proximamente
+            <TextLinkButton href={`/contracts/${id}/forecast`} variant="secondary">
+              Forecast
             </TextLinkButton>
             {user.role === UserRole.ADMIN ? (
               <TextLinkButton href={`/contracts/${id}/edit`} variant="secondary">

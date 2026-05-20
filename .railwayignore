@@ -1,0 +1,45 @@
+# Dependencies and package manager caches
+node_modules
+.npm
+.pnpm-store
+.yarn/cache
+
+# Framework/build outputs
+.next
+out
+build
+dist
+coverage
+*.tsbuildinfo
+
+# Local-only environment and tool state
+.env
+.env.*
+!.env.example
+!.env*.example
+.vercel
+.agents
+.codex
+railpack-plan.json
+
+# Git and editor noise
+.git
+.github
+.DS_Store
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Large local data/archive artifacts
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+*.rar
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.backup

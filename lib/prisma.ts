@@ -32,6 +32,7 @@ function hasLatestDelegates(prisma: PrismaClient) {
     "itemFamily" in prisma &&
     "itemSubfamily" in prisma &&
     "itemGroupCatalog" in prisma &&
+    "contractForecast" in prisma &&
     Boolean(userModel?.fields.some((field) => field.name === "approvalStatus"))
   );
 }

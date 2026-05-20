@@ -6,7 +6,7 @@ const items = [
   { key: "items", label: "Itemizado", adminOnly: false },
   { key: "closures", label: "EDP", adminOnly: false },
   { key: "changes", label: "NOC", adminOnly: false },
-  { key: "forecast", label: "Forecast", adminOnly: false, disabled: true },
+  { key: "forecast", label: "Forecast", adminOnly: false },
   { key: "taxonomy", label: "Jerarquia", adminOnly: true },
 ] as const;
 
@@ -25,7 +25,7 @@ export function ContractNav({
     taxonomy: `/contracts/${contractId}/taxonomy`,
     closures: `/contracts/${contractId}/closures`,
     changes: `/contracts/${contractId}/changes`,
-    forecast: "#",
+    forecast: `/contracts/${contractId}/forecast`,
   } as const;
 
   return (
@@ -34,18 +34,6 @@ export function ContractNav({
         .filter((item) => !item.adminOnly || userRole === UserRole.ADMIN)
         .map((item) => {
         const isActive = item.key === active;
-
-        if ("disabled" in item && item.disabled) {
-          return (
-            <span
-              key={item.key}
-              className="whitespace-nowrap rounded-full px-3 py-2 text-sm font-medium text-slate-400"
-              title="Proximamente"
-            >
-              {item.label}
-            </span>
-          );
-        }
 
         return (
           <Link

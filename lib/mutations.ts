@@ -3,6 +3,7 @@ import "server-only";
 import {
   ChangeStatus,
   ChangeType,
+  ContractForecastStatus,
   ContractStatus,
   DiscountMode,
   MonthlyClosureStatus,
@@ -2548,6 +2549,15 @@ async function applyContractChange(changeId: string): Promise<MutationResult> {
         data: {
           status: ChangeStatus.APPLIED,
           appliedAt: new Date(),
+        },
+      });
+      await tx.contractForecast.updateMany({
+        where: {
+          contractId: change.contractId,
+          status: ContractForecastStatus.APPROVED,
+        },
+        data: {
+          status: ContractForecastStatus.OUTDATED,
         },
       });
     });

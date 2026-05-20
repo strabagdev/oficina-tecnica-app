@@ -49,6 +49,23 @@ enum MonthlyClosureStatus {
   REPLACED
 }
 
+enum ContractForecastStatus {
+  DRAFT
+  APPROVED
+  ARCHIVED
+  OUTDATED
+}
+
+enum ContractForecastLineKind {
+  REAL
+  FORECAST
+}
+
+enum ContractForecastLineSource {
+  AUTO
+  MANUAL
+}
+
 model User {
   id           String    @id @default(cuid())
   authUserId   String?   @unique
@@ -93,6 +110,8 @@ model Contract {
   items          ContractItem[]
   changes        ContractChange[]
   monthlyClosures MonthlyClosure[]
+  forecasts      ContractForecast[]
+  forecastSnapshots ContractForecastSnapshot[]
 }
 
 model MeasurementUnit {
@@ -317,4 +336,94 @@ model ContractChangeLine {
 
   @@index([contractChangeId])
   @@index([contractItemId])
+}
+
+model ContractForecast {
+  id                     String                     @id @default(cuid())
+  contractId             String
+  status                 ContractForecastStatus     @default(DRAFT)
+  version                Int                        @default(1)
+  startYear              Int
+  startMonth             Int
+  lastClosedYear         Int?
+  lastClosedMonth        Int?
+  currentContractAmount  Decimal                    @db.Decimal(18, 2)
+  edpAccumulatedAmount   Decimal                    @db.Decimal(18, 2)
+  remainingAmount        Decimal                    @db.Decimal(18, 2)
+  totalForecastAmount    Decimal                    @db.Decimal(18, 2)
+  differenceAmount       Decimal                    @db.Decimal(18, 2)
+  estimatedCloseYear     Int?
+  estimatedCloseMonth    Int?
+  approvedAt             DateTime?
+  archivedAt             DateTime?
+  createdAt              DateTime                   @default(now())
+  updatedAt              DateTime                   @updatedAt
+  contract               Contract                   @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  lines                  ContractForecastLine[]
+  snapshots              ContractForecastSnapshot[]
+
+  @@unique([contractId, version])
+  @@index([contractId])
+  @@index([status])
+}
+
+model ContractForecastLine {
+  id          String                     @id @default(cuid())
+  forecastId  String
+  year        Int
+  month       Int
+  kind        ContractForecastLineKind
+  source      ContractForecastLineSource @default(AUTO)
+  amount      Decimal                    @db.Decimal(18, 2)
+  locked      Boolean                    @default(false)
+  createdAt   DateTime                   @default(now())
+  updatedAt   DateTime                   @updatedAt
+  forecast    ContractForecast           @relation(fields: [forecastId], references: [id], onDelete: Cascade)
+
+  @@unique([forecastId, year, month])
+  @@index([forecastId])
+  @@index([year, month])
+}
+
+model ContractForecastSnapshot {
+  id                     String                         @id @default(cuid())
+  contractId             String
+  forecastId             String?
+  version                Int
+  status                 ContractForecastStatus         @default(APPROVED)
+  startYear              Int
+  startMonth             Int
+  lastClosedYear         Int?
+  lastClosedMonth        Int?
+  currentContractAmount  Decimal                        @db.Decimal(18, 2)
+  edpAccumulatedAmount   Decimal                        @db.Decimal(18, 2)
+  remainingAmount        Decimal                        @db.Decimal(18, 2)
+  totalForecastAmount    Decimal                        @db.Decimal(18, 2)
+  differenceAmount       Decimal                        @db.Decimal(18, 2)
+  estimatedCloseYear     Int?
+  estimatedCloseMonth    Int?
+  approvedAt             DateTime                       @default(now())
+  createdAt              DateTime                       @default(now())
+  contract               Contract                       @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  forecast               ContractForecast?              @relation(fields: [forecastId], references: [id], onDelete: SetNull)
+  lines                  ContractForecastSnapshotLine[]
+
+  @@index([contractId])
+  @@index([forecastId])
+}
+
+model ContractForecastSnapshotLine {
+  id          String                     @id @default(cuid())
+  snapshotId  String
+  year        Int
+  month       Int
+  kind        ContractForecastLineKind
+  source      ContractForecastLineSource
+  amount      Decimal                    @db.Decimal(18, 2)
+  locked      Boolean                    @default(false)
+  createdAt   DateTime                   @default(now())
+  snapshot    ContractForecastSnapshot   @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@index([snapshotId])
+  @@index([year, month])
 }

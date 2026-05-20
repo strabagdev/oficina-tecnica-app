@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { ContractNav } from "@/components/contract-nav";
 
-type ContractTabKey = "overview" | "items" | "taxonomy" | "closures" | "changes";
+type ContractTabKey = "overview" | "items" | "taxonomy" | "closures" | "changes" | "forecast";
 
 export function ContractShell({
   contractId,
